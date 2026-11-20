@@ -264,6 +264,33 @@ async function acceptDeliverable() {
   }
 }
 
+async function reviewDeliverable() {
+  const id = document.querySelector("#review-deliverable-id").value.trim();
+  const decision = document.querySelector("#review-decision").value;
+  const comment = document.querySelector("#review-comment").value.trim();
+  if (!id || !comment) return showMessage("Complete the deliverable ID and review comment first.", "error");
+  try {
+    await request(`/api/deliverables/${encodeURIComponent(id)}/review`, {
+      method: "POST",
+      body: JSON.stringify({ decision, comment }),
+    });
+    showMessage(`Deliverable ${decision === "approved" ? "approved" : "returned for revision"}.`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function completeProject() {
+  const id = document.querySelector("#complete-project-id").value.trim();
+  if (!id) return showMessage("Enter a project ID first.", "error");
+  try {
+    await request(`/api/projects/${encodeURIComponent(id)}/complete`, { method: "POST", body: "{}" });
+    showMessage("Project completed after client acceptance.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 function syncRole() {
   actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`;
   document.querySelectorAll(".admin-only").forEach((element) => {
@@ -296,5 +323,7 @@ document.querySelector("#reject-professional").addEventListener("click", () => d
 document.querySelector("#load-admissions").addEventListener("click", loadAdmissions);
 document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
 document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
+document.querySelector("#review-deliverable").addEventListener("click", reviewDeliverable);
+document.querySelector("#complete-project").addEventListener("click", completeProject);
 role.addEventListener("change", syncRole);
 syncRole();

@@ -111,6 +111,21 @@
           <label for="deliverable-id">Deliverable ID <input id="deliverable-id" placeholder="UUID from the visible list" /></label>
           <button id="accept-deliverable">Accept approved deliverable</button>
         </div>
+        <div class="form-grid reviewer-only">
+          <label for="review-deliverable-id">Deliverable ID <input id="review-deliverable-id" placeholder="UUID to review" /></label>
+          <label for="review-decision">Decision
+            <select id="review-decision">
+              <option value="approved">Approve</option>
+              <option value="revision_requested">Request revision</option>
+            </select>
+          </label>
+          <label for="review-comment">Review comment <input id="review-comment" placeholder="Independent review note" /></label>
+          <button id="review-deliverable">Submit review</button>
+        </div>
+        <div class="form-grid admin-only">
+          <label for="complete-project-id">Project ID <input id="complete-project-id" placeholder="UUID after client acceptance" /></label>
+          <button id="complete-project">Complete project</button>
+        </div>
         <div id="identity-status" class="status" role="status">Choose a synthetic identity and refresh.</div>
         <div id="workspace-results" class="results" aria-live="polite"></div>
       </section>
