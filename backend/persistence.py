@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from uuid import UUID, uuid4
@@ -171,6 +172,74 @@ class PostgresRepository:
             )
             self._audit(cursor, row[0], actor, "work_package.created", "work_package", str(package_id), {"depends_on": [str(item) for item in depends_on]})
         return package_id
+
+    def approve_professional(self, professional_id: str, actor: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO professional_admissions(professional_id, status, decided_by, decided_at)
+                   VALUES (%s, 'approved', %s, now())
+                   ON CONFLICT (professional_id) DO UPDATE SET status = 'approved', decided_by = EXCLUDED.decided_by, decided_at = now()""",
+                (professional_id, actor),
+            )
+
+    def assign_work(self, package_id: UUID, professional_id: str, expires_at: datetime | None, actor: str) -> UUID:
+        assignment_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT e.organization_id FROM work_packages w
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE w.id = %s""",
+                (package_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Work package not found")
+            organization_id = row[0]
+            self._require_owner(cursor, organization_id, actor)
+            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("Professional approval is required before assignment")
+            cursor.execute(
+                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'professional' AND revoked_at IS NULL",
+                (organization_id, professional_id),
+            )
+            if cursor.fetchone() is None:
+                raise PermissionError("Professional is not admitted to this organization")
+            cursor.execute(
+                """INSERT INTO assignments(id, work_package_id, professional_id, status, expires_at)
+                   VALUES (%s, %s, %s, 'invited', %s)""",
+                (assignment_id, package_id, professional_id, expires_at),
+            )
+            cursor.execute("UPDATE work_packages SET status = 'assigned' WHERE id = %s", (package_id,))
+            self._audit(cursor, organization_id, actor, "assignment.invited", "assignment", str(assignment_id))
+        return assignment_id
+
+    def accept_assignment(self, assignment_id: UUID, professional_id: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT a.status, a.expires_at, e.organization_id
+                   FROM assignments a
+                   JOIN work_packages w ON w.id = a.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE a.id = %s AND a.professional_id = %s""",
+                (assignment_id, professional_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Assignment not found")
+            status, expires_at, organization_id = row
+            if status != "invited":
+                raise ValueError("Assignment invitation is no longer active")
+            if expires_at and expires_at <= datetime.now(timezone.utc):
+                cursor.execute("UPDATE assignments SET status = 'expired' WHERE id = %s", (assignment_id,))
+                raise ValueError("Assignment invitation has expired")
+            cursor.execute("UPDATE assignments SET status = 'accepted' WHERE id = %s", (assignment_id,))
+            self._audit(cursor, organization_id, professional_id, "assignment.accepted", "assignment", str(assignment_id))
 
     def revoke_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:

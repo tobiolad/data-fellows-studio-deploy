@@ -54,12 +54,25 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"project_id": project.json()["id"], "title": "Persistent package", "acceptance_criteria": ["reviewed"]},
         )
         self.assertEqual(package.status_code, 201)
-        unsupported = self.client.post(
+        professional = self.client.post(
+            f"/api/organizations/{organization_id}/members",
+            headers=self.admin,
+            json={"actor_id": "postgres-professional", "role": "professional"},
+        )
+        self.assertEqual(professional.status_code, 201)
+        approval = self.client.post("/api/professionals/postgres-professional/approve", headers=self.admin)
+        self.assertEqual(approval.status_code, 200)
+        invitation = self.client.post(
             f"/api/work-packages/{package.json()['id']}/assignments",
             headers=self.admin,
-            json={"professional_id": "not-yet-persisted"},
+            json={"professional_id": "postgres-professional"},
         )
-        self.assertEqual(unsupported.status_code, 501)
+        self.assertEqual(invitation.status_code, 201)
+        accepted = self.client.post(
+            f"/api/assignments/{invitation.json()['id']}/accept",
+            headers=auth("postgres-professional", "professional"),
+        )
+        self.assertEqual(accepted.status_code, 200)
 
 
 if __name__ == "__main__":

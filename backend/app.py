@@ -187,6 +187,7 @@ class WorkPackageCreate(BaseModel):
 
 class AssignmentCreate(BaseModel):
     professional_id: str = Field(min_length=2, max_length=120)
+    expires_at: datetime | None = None
 
 
 class AIRunCreate(BaseModel):
@@ -284,6 +285,9 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
 @app.post("/api/professionals/{professional_id}/approve")
 def approve_professional(professional_id: str, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        postgres_repository().approve_professional(professional_id, actor.actor_id)
+        return {"professional_id": professional_id, "status": "approved"}
     unsupported_memory_domain("professional admissions")
     require_global(actor, "admin")
     store.approved_professionals.add(professional_id)
@@ -389,6 +393,16 @@ def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
 @app.post("/api/work-packages/{package_id}/assignments", status_code=status.HTTP_201_CREATED)
 def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            assignment_id = postgres_repository().assign_work(UUID(package_id), body.professional_id, body.expires_at, actor.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": str(assignment_id), "work_package_id": package_id, "professional_id": body.professional_id, "status": "invited", "expires_at": body.expires_at.isoformat() if body.expires_at else None}
     unsupported_memory_domain("assignments")
     project = project_for_package(package_id)
     org_id = organization_for_engagement(project["engagement_id"])
@@ -402,6 +416,20 @@ def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> di
     store.work_packages[package_id]["status"] = "assigned"
     audit_response(actor, "assignment", assignment_id, "assignment.accepted", org_id)
     return store.assignments[assignment_id]
+
+
+@app.post("/api/assignments/{assignment_id}/accept")
+def accept_assignment(assignment_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            postgres_repository().accept_assignment(UUID(assignment_id), actor.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": assignment_id, "professional_id": actor.actor_id, "status": "accepted"}
+    unsupported_memory_domain("assignments")
 
 
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)
