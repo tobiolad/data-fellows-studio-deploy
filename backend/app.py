@@ -435,6 +435,26 @@ def accept_assignment(assignment_id: str, request: Request) -> dict:
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)
 def create_ai_run(body: AIRunCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        if body.tools != ["planning"]:
+            raise HTTPException(status_code=422, detail="Only the bounded planning tool is enabled")
+        output = {
+            "type": "work_breakdown",
+            "synthetic": True,
+            "steps": [
+                {"order": 1, "title": "Clarify approved requirements", "requires_approval": True},
+                {"order": 2, "title": "Prepare implementation checklist", "requires_approval": True},
+                {"order": 3, "title": "Review acceptance criteria", "requires_approval": True},
+            ],
+            "source_specification": body.specification,
+        }
+        try:
+            run_id, artifact_id, _ = postgres_repository().create_ai_run(UUID(body.work_package_id), actor.actor_id, body.specification, body.budget_cents, output)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": str(run_id), "work_package_id": body.work_package_id, "requested_by": actor.actor_id, "status": "succeeded", "budget_cents": body.budget_cents, "spent_cents": 0, "agent": "synthetic-planner-v1", "artifact_id": str(artifact_id), "artifact": {"id": str(artifact_id), "run_id": str(run_id), "status": "pending_review", "content": output}}
     unsupported_memory_domain("AI runs")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
@@ -472,6 +492,16 @@ def create_ai_run(body: AIRunCreate, request: Request) -> dict:
 @app.post("/api/ai-runs/{run_id}/decision")
 def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        require_global(actor, "admin", "reviewer")
+        try:
+            return postgres_repository().decide_ai_artifact(UUID(run_id), actor.actor_id, body.decision, body.comment)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     unsupported_memory_domain("AI artifacts")
     run = store.ai_runs.get(run_id)
     if not run:

@@ -241,6 +241,66 @@ class PostgresRepository:
             cursor.execute("UPDATE assignments SET status = 'accepted' WHERE id = %s", (assignment_id,))
             self._audit(cursor, organization_id, professional_id, "assignment.accepted", "assignment", str(assignment_id))
 
+    def create_ai_run(self, package_id: UUID, requested_by: str, specification: str, budget_cents: int, output: dict[str, Any]) -> tuple[UUID, UUID, UUID]:
+        run_id, artifact_id = uuid4(), uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT e.organization_id FROM work_packages w
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE w.id = %s""",
+                (package_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Work package not found")
+            organization_id = row[0]
+            self._require_owner(cursor, organization_id, requested_by)
+            cursor.execute(
+                """INSERT INTO ai_runs(id, work_package_id, requested_by, agent_version, policy_version, budget_cents, spent_cents, status)
+                   VALUES (%s, %s, %s, 'synthetic-planner-v1', 'planning-only-v1', %s, 0, 'succeeded')""",
+                (run_id, package_id, requested_by, budget_cents),
+            )
+            cursor.execute(
+                """INSERT INTO artifacts(id, run_id, version, content, status)
+                   VALUES (%s, %s, 1, %s, 'pending_review')""",
+                (artifact_id, run_id, json.dumps(output)),
+            )
+            self._audit(cursor, organization_id, requested_by, "ai_run.completed", "ai_run", str(run_id))
+        return run_id, artifact_id, UUID(str(organization_id))
+
+    def decide_ai_artifact(self, run_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT a.id, a.status, r.requested_by, e.organization_id, a.content
+                   FROM artifacts a
+                   JOIN ai_runs r ON r.id = a.run_id
+                   JOIN work_packages w ON w.id = r.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE r.id = %s""",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("AI run not found")
+            artifact_id, artifact_status, requested_by, organization_id, content = row
+            if requested_by == reviewer_id:
+                raise ValueError("Independent approval is required")
+            cursor.execute(
+                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL",
+                (organization_id, reviewer_id),
+            )
+            if cursor.fetchone() is None:
+                raise PermissionError("Reviewer is not authorized for this organization")
+            if artifact_status != "pending_review":
+                raise ValueError("AI artifact is no longer pending review")
+            cursor.execute("UPDATE artifacts SET status = %s WHERE id = %s", (decision, artifact_id))
+            self._audit(cursor, organization_id, reviewer_id, f"ai_artifact.{decision}", "ai_artifact", str(artifact_id), {"comment": comment})
+            return {"id": str(artifact_id), "run_id": str(run_id), "status": decision, "content": content, "decision_by": reviewer_id, "decision_comment": comment}
+
     def revoke_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:
             cursor = connection.cursor()

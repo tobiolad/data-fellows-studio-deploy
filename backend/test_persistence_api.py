@@ -60,6 +60,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"actor_id": "postgres-professional", "role": "professional"},
         )
         self.assertEqual(professional.status_code, 201)
+        reviewer = self.client.post(
+            f"/api/organizations/{organization_id}/members",
+            headers=self.admin,
+            json={"actor_id": "postgres-reviewer", "role": "reviewer"},
+        )
+        self.assertEqual(reviewer.status_code, 201)
         approval = self.client.post("/api/professionals/postgres-professional/approve", headers=self.admin)
         self.assertEqual(approval.status_code, 200)
         invitation = self.client.post(
@@ -73,6 +79,19 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             headers=auth("postgres-professional", "professional"),
         )
         self.assertEqual(accepted.status_code, 200)
+        run = self.client.post(
+            "/api/ai-runs",
+            headers=self.admin,
+            json={"work_package_id": package.json()["id"], "specification": "Prepare a bounded synthetic plan for the approved work package."},
+        )
+        self.assertEqual(run.status_code, 201)
+        self.assertEqual(self.client.post(f"/api/ai-runs/{run.json()['id']}/decision", headers=self.admin, json={"decision": "approved"}).status_code, 409)
+        decision = self.client.post(
+            f"/api/ai-runs/{run.json()['id']}/decision",
+            headers=auth("postgres-reviewer", "reviewer"),
+            json={"decision": "approved", "comment": "Synthetic review complete"},
+        )
+        self.assertEqual(decision.status_code, 200)
 
 
 if __name__ == "__main__":
