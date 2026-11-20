@@ -10,12 +10,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from backend.persistence import PersistenceConfigurationError, PostgresRepository
 
 
 def now() -> str:
@@ -92,6 +95,30 @@ def identity(request: Request) -> Identity:
         raise HTTPException(status_code=401, detail="Malformed synthetic identity")
     roles = frozenset(role for role in parts[1].split(",") if role)
     return Identity(parts[0], roles)
+
+
+def postgres_mode() -> bool:
+    return os.getenv("STUDIO_PERSISTENCE", "memory").lower() == "postgres"
+
+
+@lru_cache(maxsize=1)
+def postgres_repository() -> PostgresRepository:
+    try:
+        return PostgresRepository()
+    except PersistenceConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="PostgreSQL persistence is not configured") from exc
+
+
+def unsupported_memory_domain(operation: str) -> None:
+    if postgres_mode():
+        raise HTTPException(status_code=501, detail=f"PostgreSQL persistence for {operation} is not enabled yet")
+
+
+def organization_uuid(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="organization_id must be a UUID") from exc
 
 
 def require_global(actor: Identity, *roles: str) -> None:
@@ -203,6 +230,9 @@ def me(request: Request) -> dict:
 def create_organization(body: OrganizationCreate, request: Request) -> dict:
     actor = identity(request)
     require_global(actor, "admin")
+    if postgres_mode():
+        organization_id = postgres_repository().create_organization(body.name, actor.actor_id)
+        return {"id": str(organization_id), "name": body.name, "created_at": now()}
     organization_id = str(uuid4())
     store.organizations[organization_id] = {"id": organization_id, "name": body.name, "created_at": now()}
     store.memberships[(actor.actor_id, organization_id)] = {"owner"}
@@ -213,6 +243,9 @@ def create_organization(body: OrganizationCreate, request: Request) -> dict:
 @app.post("/api/organizations/{organization_id}/members", status_code=status.HTTP_201_CREATED)
 def grant_member(organization_id: str, body: MemberGrant, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        postgres_repository().grant_membership(organization_uuid(organization_id), body.actor_id, body.role, actor.actor_id)
+        return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
     if organization_id not in store.organizations:
         raise HTTPException(status_code=404, detail="Organization not found")
     member(actor, organization_id, "owner")
@@ -224,6 +257,14 @@ def grant_member(organization_id: str, body: MemberGrant, request: Request) -> d
 @app.delete("/api/organizations/{organization_id}/members/{member_id}/{role}")
 def revoke_member(organization_id: str, member_id: str, role: Literal["client", "professional", "reviewer", "owner"], request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            postgres_repository().revoke_membership(organization_uuid(organization_id), member_id, role, actor.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"actor_id": member_id, "organization_id": organization_id, "role": role, "status": "revoked"}
     if organization_id not in store.organizations:
         raise HTTPException(status_code=404, detail="Organization not found")
     member(actor, organization_id, "owner")
@@ -242,6 +283,7 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
 @app.post("/api/professionals/{professional_id}/approve")
 def approve_professional(professional_id: str, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("professional admissions")
     require_global(actor, "admin")
     store.approved_professionals.add(professional_id)
     audit_response(actor, "professional", professional_id, "professional.approved")
@@ -252,6 +294,9 @@ def approve_professional(professional_id: str, request: Request) -> dict:
 def create_engagement(body: EngagementCreate, request: Request) -> dict:
     actor = identity(request)
     require_global(actor, "admin")
+    if postgres_mode():
+        engagement_id = postgres_repository().create_engagement(organization_uuid(body.organization_id), body.name, body.objective, actor.actor_id)
+        return {"id": str(engagement_id), "organization_id": body.organization_id, "name": body.name, "objective": body.objective, "status": "authorized", "created_at": now()}
     if body.organization_id not in store.organizations:
         raise HTTPException(status_code=404, detail="Organization not found")
     engagement_id = str(uuid4())
@@ -270,6 +315,8 @@ def create_engagement(body: EngagementCreate, request: Request) -> dict:
 @app.get("/api/engagements")
 def list_engagements(request: Request) -> list[dict]:
     actor = identity(request)
+    if postgres_mode():
+        return postgres_repository().list_engagements(actor.actor_id, admin="admin" in actor.roles)
     if "admin" in actor.roles:
         return list(store.engagements.values())
     visible = []
@@ -282,6 +329,7 @@ def list_engagements(request: Request) -> list[dict]:
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("projects")
     org_id = organization_for_engagement(body.engagement_id)
     member(actor, org_id, "owner")
     project_id = str(uuid4())
@@ -299,6 +347,7 @@ def create_project(body: ProjectCreate, request: Request) -> dict:
 @app.post("/api/work-packages", status_code=status.HTTP_201_CREATED)
 def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("work packages")
     project = store.projects.get(body.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -319,6 +368,7 @@ def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
 @app.post("/api/work-packages/{package_id}/assignments", status_code=status.HTTP_201_CREATED)
 def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("assignments")
     project = project_for_package(package_id)
     org_id = organization_for_engagement(project["engagement_id"])
     member(actor, org_id, "owner")
@@ -336,6 +386,7 @@ def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> di
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)
 def create_ai_run(body: AIRunCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("AI runs")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
     member(actor, org_id, "owner")
@@ -372,6 +423,7 @@ def create_ai_run(body: AIRunCreate, request: Request) -> dict:
 @app.post("/api/ai-runs/{run_id}/decision")
 def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("AI artifacts")
     run = store.ai_runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
@@ -391,6 +443,7 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
 @app.post("/api/deliverables", status_code=status.HTTP_201_CREATED)
 def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("deliverables")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
     allowed = store.memberships.get((actor.actor_id, org_id), set())
@@ -416,6 +469,7 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
 @app.post("/api/deliverables/{deliverable_id}/review")
 def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("deliverable reviews")
     deliverable = store.deliverables.get(deliverable_id)
     if not deliverable:
         raise HTTPException(status_code=404, detail="Deliverable not found")
@@ -434,6 +488,7 @@ def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request
 @app.post("/api/deliverables/{deliverable_id}/accept")
 def accept_deliverable(deliverable_id: str, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("client acceptance")
     deliverable = store.deliverables.get(deliverable_id)
     if not deliverable:
         raise HTTPException(status_code=404, detail="Deliverable not found")
@@ -452,6 +507,7 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
 @app.post("/api/projects/{project_id}/complete")
 def complete_project(project_id: str, request: Request) -> dict:
     actor = identity(request)
+    unsupported_memory_domain("project completion")
     project = store.projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -468,6 +524,8 @@ def complete_project(project_id: str, request: Request) -> dict:
 def audit(request: Request) -> list[dict]:
     actor = identity(request)
     require_global(actor, "admin", "reviewer")
+    if postgres_mode():
+        return postgres_repository().list_audit(actor.actor_id, admin="admin" in actor.roles)
     if "admin" in actor.roles:
         return list(store.audit)
     visible_organizations = {
