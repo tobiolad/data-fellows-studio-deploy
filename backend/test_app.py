@@ -1,11 +1,14 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ["STUDIO_TEST_MODE"] = "true"
 
 from fastapi.testclient import TestClient
 
+import backend.app as app_module
 from backend.app import app, store
+from backend.auth import Principal, TokenValidationError
 
 
 def auth(actor: str, role: str) -> dict[str, str]:
@@ -156,6 +159,26 @@ class StudioLifecycleTests(unittest.TestCase):
             self.assertEqual(response.status_code, 503)
         finally:
             os.environ["STUDIO_TEST_MODE"] = "true"
+
+    def test_entra_enabled_requests_use_validator_boundary(self) -> None:
+        class FakeValidator:
+            def validate(self, token: str) -> Principal:
+                if token != "synthetic-signed-token":
+                    raise TokenValidationError("invalid token")
+                return Principal("entra-staff-1", "synthetic-tenant", frozenset({"admin"}), {})
+
+        os.environ["STUDIO_TEST_MODE"] = "false"
+        os.environ["STUDIO_ENTRA_ENABLED"] = "true"
+        try:
+            with patch.object(app_module, "entra_validator", return_value=FakeValidator()):
+                valid = self.client.get("/api/me", headers={"Authorization": "Bearer synthetic-signed-token"})
+                invalid = self.client.get("/api/me", headers={"Authorization": "Bearer invalid"})
+            self.assertEqual(valid.status_code, 200)
+            self.assertEqual(valid.json()["id"], "entra-staff-1")
+            self.assertEqual(invalid.status_code, 401)
+        finally:
+            os.environ["STUDIO_TEST_MODE"] = "true"
+            os.environ.pop("STUDIO_ENTRA_ENABLED", None)
 
 
 if __name__ == "__main__":
