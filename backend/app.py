@@ -380,6 +380,8 @@ def list_projects(engagement_id: str, request: Request) -> list[dict]:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     engagement = store.engagements.get(engagement_id)
     if not engagement:
         raise HTTPException(status_code=404, detail="Engagement not found")
@@ -666,6 +668,8 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     unsupported_memory_domain("deliverables")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
@@ -674,6 +678,8 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
     if "admin" not in actor.roles and "owner" not in allowed and not assigned:
         raise HTTPException(status_code=403, detail="Only an assigned delivery resource may submit")
     existing = [d for d in store.deliverables.values() if d["work_package_id"] == body.work_package_id]
+    if existing and existing[-1]["status"] in {"under_review", "approved", "accepted"}:
+        raise HTTPException(status_code=409, detail="A new version requires a revision request on the latest deliverable")
     deliverable_id = str(uuid4())
     record = {
         "id": deliverable_id,

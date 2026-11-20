@@ -437,6 +437,10 @@ class PostgresRepository:
                 raise PermissionError("Only an authorized delivery resource may submit")
             cursor.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM deliverables WHERE work_package_id = %s", (package_id,))
             version = cursor.fetchone()[0]
+            cursor.execute("SELECT status FROM deliverables WHERE work_package_id = %s ORDER BY version DESC LIMIT 1", (package_id,))
+            latest = cursor.fetchone()
+            if latest and latest[0] in {"under_review", "approved", "accepted"}:
+                raise ValueError("A new version requires a revision request on the latest deliverable")
             cursor.execute(
                 "INSERT INTO deliverables(id, work_package_id, version, title, content, submitted_by, status) VALUES (%s, %s, %s, %s, %s, %s, 'under_review')",
                 (deliverable_id, package_id, version, title, content, submitted_by),

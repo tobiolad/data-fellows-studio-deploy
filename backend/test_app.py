@@ -104,6 +104,25 @@ class StudioLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(decision.status_code, 200)
 
+    def test_revision_requested_creates_immutable_successor(self) -> None:
+        organization = self.post("/api/organizations", {"name": "Revision test org"}, self.admin)
+        org_id = organization["id"]
+        for actor_id, role in (("reviewer-1", "reviewer"), ("professional-1", "professional")):
+            self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
+        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Revision engagement", "objective": "Verify successors"}, self.admin)
+        project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Revision project"}, self.admin)
+        package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Revision package", "acceptance_criteria": ["review"]}, self.admin)
+        invitation = self.post(f"/api/work-packages/{package['id']}/assignments", {"professional_id": "professional-1"}, self.admin)
+        self.post(f"/api/assignments/{invitation['id']}/accept", {}, self.professional)
+        first = self.post("/api/deliverables", {"work_package_id": package["id"], "title": "First version", "content": "Initial synthetic content"}, self.professional)
+        revised = self.client.post(f"/api/deliverables/{first['id']}/review", headers=self.reviewer, json={"decision": "revision_requested", "comment": "Add validation notes"})
+        self.assertEqual(revised.status_code, 200)
+        second = self.post("/api/deliverables", {"work_package_id": package["id"], "title": "Second version", "content": "Revised synthetic content"}, self.professional)
+        self.assertEqual(second["version"], 2)
+        blocked = self.client.post("/api/deliverables", headers=self.professional, json={"work_package_id": package["id"], "title": "Third version", "content": "Should be blocked while under review"})
+        self.assertEqual(blocked.status_code, 409)
+
     def test_membership_revocation_removes_access_and_preserves_an_owner(self) -> None:
         organization = self.post("/api/organizations", {"name": "Revocation test"}, self.admin)
         org_id = organization["id"]

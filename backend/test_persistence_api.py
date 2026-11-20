@@ -126,6 +126,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"decision": "approved", "comment": "Reviewed synthetic deliverable"},
         )
         self.assertEqual(review.status_code, 200)
+        blocked_revision = self.client.post(
+            "/api/deliverables",
+            headers=auth("postgres-professional", "professional"),
+            json={"work_package_id": package.json()["id"], "title": "Duplicate pending version", "content": "Should be blocked"},
+        )
+        self.assertEqual(blocked_revision.status_code, 409)
         accepted_deliverable = self.client.post(
             f"/api/deliverables/{deliverable.json()['id']}/accept",
             headers=auth("postgres-client-user", "client"),
