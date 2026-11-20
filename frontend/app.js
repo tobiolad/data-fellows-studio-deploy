@@ -40,7 +40,7 @@ function showRecords(title, records) {
     records.forEach((record) => {
       const item = document.createElement("li");
       const name = document.createElement("strong");
-      name.textContent = record.name || record.title || record.actor_id || `Version ${record.version}`;
+      name.textContent = record.name || record.title || record.actor_id || record.work_package_id || record.id || `Version ${record.version}`;
       const details = document.createElement("span");
       details.textContent = [record.role, record.status, record.revoked_at ? "revoked" : "active", record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
       item.append(name, details);
@@ -121,6 +121,27 @@ async function loadDeliverables() {
   }
 }
 
+async function loadAssignments() {
+  try {
+    showRecords("My scoped assignments", await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/assignments`));
+    showMessage("Assignments loaded.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function decideAssignment(decision) {
+  const id = document.querySelector("#assignment-id").value.trim();
+  if (!id) return showMessage("Enter an assignment ID first.", "error");
+  try {
+    await request(`/api/assignments/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" });
+    showMessage(`Assignment ${decision === "accept" ? "accepted" : "declined"}.`, "success");
+    await loadAssignments();
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 async function submitDeliverable() {
   const body = {
     work_package_id: document.querySelector("#package-id").value.trim(),
@@ -168,6 +189,9 @@ document.querySelector("#create-engagement").addEventListener("click", createEng
 document.querySelector("#load-members").addEventListener("click", loadMembers);
 document.querySelector("#load-projects").addEventListener("click", loadProjects);
 document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
+document.querySelector("#load-assignments").addEventListener("click", loadAssignments);
+document.querySelector("#accept-assignment").addEventListener("click", () => decideAssignment("accept"));
+document.querySelector("#decline-assignment").addEventListener("click", () => decideAssignment("decline"));
 document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
 document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
 role.addEventListener("change", syncRole);
