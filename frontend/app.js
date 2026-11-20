@@ -42,7 +42,8 @@ function showRecords(title, records) {
       const name = document.createElement("strong");
       name.textContent = record.name || record.title || record.actor_id || record.work_package_id || record.id || `Version ${record.version}`;
       const details = document.createElement("span");
-      details.textContent = [record.role, record.status, record.revoked_at ? "revoked" : "active", record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
+      const membershipState = record.actor_id && (record.revoked_at ? "revoked" : "active");
+      details.textContent = [record.role, record.status, membershipState, record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
       item.append(name, details);
       list.append(item);
     });
