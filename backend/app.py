@@ -840,7 +840,8 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Deliverable not found")
     project = project_for_package(deliverable["work_package_id"])
     org_id = organization_for_engagement(project["engagement_id"])
-    member(actor, org_id, "client")
+    if "client" not in store.memberships.get((actor.actor_id, org_id), set()):
+        raise HTTPException(status_code=403, detail="Only an active client membership may record acceptance")
     if deliverable["status"] != "approved":
         raise HTTPException(status_code=409, detail="Only an internally approved deliverable can be accepted")
     deliverable["status"] = "accepted"

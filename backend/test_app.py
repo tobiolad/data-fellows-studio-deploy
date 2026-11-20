@@ -71,6 +71,8 @@ class StudioLifecycleTests(unittest.TestCase):
         deliverable = self.post("/api/deliverables", {"work_package_id": package["id"], "title": "Reviewed plan", "content": "Synthetic plan content"}, self.professional)
         review = self.post(f"/api/deliverables/{deliverable['id']}/review", {"decision": "approved", "comment": "Evidence and acceptance criteria checked."}, self.reviewer)
         self.assertEqual(review["deliverable"]["status"], "approved")
+        unauthorized_accept = self.client.post(f"/api/deliverables/{deliverable['id']}/accept", headers=self.admin)
+        self.assertEqual(unauthorized_accept.status_code, 403)
         accepted = self.post(f"/api/deliverables/{deliverable['id']}/accept", {}, self.client_user)
         self.assertEqual(accepted["status"], "accepted")
         self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=self.client_user).status_code, 200)
