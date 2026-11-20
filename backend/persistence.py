@@ -258,8 +258,8 @@ class PostgresRepository:
             organization_id = row[0]
             self._require_owner(cursor, organization_id, requested_by)
             cursor.execute(
-                """INSERT INTO ai_runs(id, work_package_id, requested_by, agent_version, policy_version, budget_cents, spent_cents, status)
-                   VALUES (%s, %s, %s, 'synthetic-planner-v1', 'planning-only-v1', %s, 0, 'succeeded')""",
+                """INSERT INTO ai_runs(id, work_package_id, requested_by, agent_version, policy_version, budget_cents, spent_cents, status, started_at, finished_at)
+                   VALUES (%s, %s, %s, 'synthetic-planner-v1', 'planning-only-v1', %s, 0, 'succeeded', now(), now())""",
                 (run_id, package_id, requested_by, budget_cents),
             )
             cursor.execute(
@@ -274,7 +274,7 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
-                """SELECT a.id, a.status, r.requested_by, e.organization_id, a.content
+                """SELECT a.id, a.status, r.status, r.requested_by, e.organization_id, a.content
                    FROM artifacts a
                    JOIN ai_runs r ON r.id = a.run_id
                    JOIN work_packages w ON w.id = r.work_package_id
@@ -286,7 +286,7 @@ class PostgresRepository:
             row = cursor.fetchone()
             if row is None:
                 raise LookupError("AI run not found")
-            artifact_id, artifact_status, requested_by, organization_id, content = row
+            artifact_id, artifact_status, run_status, requested_by, organization_id, content = row
             if requested_by == reviewer_id:
                 raise ValueError("Independent approval is required")
             cursor.execute(
@@ -295,11 +295,34 @@ class PostgresRepository:
             )
             if cursor.fetchone() is None:
                 raise PermissionError("Reviewer is not authorized for this organization")
+            if run_status == "cancelled":
+                raise ValueError("Cancelled AI runs cannot be approved")
             if artifact_status != "pending_review":
                 raise ValueError("AI artifact is no longer pending review")
             cursor.execute("UPDATE artifacts SET status = %s WHERE id = %s", (decision, artifact_id))
             self._audit(cursor, organization_id, reviewer_id, f"ai_artifact.{decision}", "ai_artifact", str(artifact_id), {"comment": comment})
             return {"id": str(artifact_id), "run_id": str(run_id), "status": decision, "content": content, "decision_by": reviewer_id, "decision_comment": comment}
+
+    def cancel_ai_run(self, run_id: UUID, actor: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT r.status, e.organization_id FROM ai_runs r
+                   JOIN work_packages w ON w.id = r.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE r.id = %s""",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("AI run not found")
+            status, organization_id = row
+            self._require_owner(cursor, organization_id, actor)
+            if status in ("cancelled", "failed", "succeeded"):
+                raise ValueError("AI run is already terminal")
+            cursor.execute("UPDATE ai_runs SET cancel_requested = true, status = 'cancelled', finished_at = now() WHERE id = %s", (run_id,))
+            self._audit(cursor, organization_id, actor, "ai_run.cancelled", "ai_run", str(run_id))
 
     def submit_deliverable(self, package_id: UUID, title: str, content: str, submitted_by: str) -> dict[str, Any]:
         deliverable_id = uuid4()

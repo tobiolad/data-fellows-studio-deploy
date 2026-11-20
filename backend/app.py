@@ -121,6 +121,15 @@ def organization_uuid(value: str) -> UUID:
         raise HTTPException(status_code=422, detail="organization_id must be a UUID") from exc
 
 
+def validate_synthetic_output(output: dict) -> None:
+    if output.get("synthetic") is not True or output.get("type") != "work_breakdown":
+        raise HTTPException(status_code=502, detail="AI executor returned an invalid artifact")
+    if not isinstance(output.get("steps"), list) or not output["steps"]:
+        raise HTTPException(status_code=502, detail="AI executor returned no validated steps")
+    if not isinstance(output.get("source_specification"), str):
+        raise HTTPException(status_code=502, detail="AI executor omitted source provenance")
+
+
 def require_global(actor: Identity, *roles: str) -> None:
     if not actor.roles.intersection(roles):
         raise HTTPException(status_code=403, detail="The required internal role is missing")
@@ -448,6 +457,7 @@ def create_ai_run(body: AIRunCreate, request: Request) -> dict:
             ],
             "source_specification": body.specification,
         }
+        validate_synthetic_output(output)
         try:
             run_id, artifact_id, _ = postgres_repository().create_ai_run(UUID(body.work_package_id), actor.actor_id, body.specification, body.budget_cents, output)
         except PermissionError as exc:
@@ -487,6 +497,22 @@ def create_ai_run(body: AIRunCreate, request: Request) -> dict:
     store.artifacts[artifact_id] = {"id": artifact_id, "run_id": run_id, "status": "pending_review", "content": output}
     audit_response(actor, "ai_run", run_id, "ai_run.completed", org_id)
     return {**store.ai_runs[run_id], "artifact": store.artifacts[artifact_id]}
+
+
+@app.post("/api/ai-runs/{run_id}/cancel")
+def cancel_ai_run(run_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            postgres_repository().cancel_ai_run(UUID(run_id), actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"id": run_id, "status": "cancelled"}
+    unsupported_memory_domain("AI run cancellation")
 
 
 @app.post("/api/ai-runs/{run_id}/decision")

@@ -98,6 +98,8 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"decision": "approved", "comment": "Synthetic review complete"},
         )
         self.assertEqual(decision.status_code, 200)
+        terminal_cancel = self.client.post(f"/api/ai-runs/{run.json()['id']}/cancel", headers=self.admin)
+        self.assertEqual(terminal_cancel.status_code, 409)
         deliverable = self.client.post(
             "/api/deliverables",
             headers=auth("postgres-professional", "professional"),
