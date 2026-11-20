@@ -52,6 +52,11 @@ class StudioLifecycleTests(unittest.TestCase):
 
         run = self.post("/api/ai-runs", {"work_package_id": package["id"], "specification": "Create a bounded implementation work breakdown for the approved inventory problem."}, self.admin)
         self.assertEqual(run["agent"], "synthetic-planner-v1")
+        visible_run = self.client.get(f"/api/ai-runs/{run['id']}", headers=self.reviewer)
+        self.assertEqual(visible_run.status_code, 200)
+        self.assertEqual(visible_run.json()["artifact"]["status"], "pending_review")
+        hidden_run = self.client.get(f"/api/ai-runs/{run['id']}", headers=self.client_user)
+        self.assertEqual(hidden_run.status_code, 403)
         rejected_self = self.client.post(f"/api/ai-runs/{run['id']}/decision", json={"decision": "approved"}, headers=self.admin)
         self.assertEqual(rejected_self.status_code, 409)
         artifact = self.post(f"/api/ai-runs/{run['id']}/decision", {"decision": "approved", "comment": "Bounded plan is suitable for review."}, self.reviewer)

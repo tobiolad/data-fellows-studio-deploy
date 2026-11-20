@@ -105,6 +105,11 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"work_package_id": package.json()["id"], "specification": "Prepare a bounded synthetic plan for the approved work package."},
         )
         self.assertEqual(run.status_code, 201)
+        visible_run = self.client.get(f"/api/ai-runs/{run.json()['id']}", headers=auth("postgres-reviewer", "reviewer"))
+        self.assertEqual(visible_run.status_code, 200)
+        self.assertEqual(visible_run.json()["artifact"]["status"], "pending_review")
+        hidden_run = self.client.get(f"/api/ai-runs/{run.json()['id']}", headers=auth("postgres-client-user", "client"))
+        self.assertEqual(hidden_run.status_code, 403)
         self.assertEqual(self.client.post(f"/api/ai-runs/{run.json()['id']}/decision", headers=self.admin, json={"decision": "approved"}).status_code, 409)
         decision = self.client.post(
             f"/api/ai-runs/{run.json()['id']}/decision",

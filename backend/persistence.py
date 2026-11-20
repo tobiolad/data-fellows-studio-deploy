@@ -359,6 +359,52 @@ class PostgresRepository:
             self._audit(cursor, organization_id, requested_by, "ai_run.completed", "ai_run", str(run_id))
         return run_id, artifact_id, UUID(str(organization_id))
 
+    def get_ai_run(self, run_id: UUID, actor: str, admin: bool = False) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT r.id, r.work_package_id, r.requested_by, r.agent_version, r.policy_version,
+                          r.budget_cents, r.spent_cents, r.status, r.cancel_requested,
+                          r.error_code, r.created_at, r.started_at, r.finished_at, e.organization_id
+                   FROM ai_runs r
+                   JOIN work_packages w ON w.id = r.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE r.id = %s""",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("AI run not found")
+            if not admin:
+                cursor.execute(
+                    "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('owner', 'reviewer') AND revoked_at IS NULL",
+                    (row[13], actor),
+                )
+                if cursor.fetchone() is None:
+                    raise PermissionError("AI run access is not authorized")
+            cursor.execute(
+                "SELECT id, version, content, status, created_at FROM artifacts WHERE run_id = %s ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            )
+            artifact = cursor.fetchone()
+            return {
+                "id": str(row[0]),
+                "work_package_id": str(row[1]),
+                "requested_by": row[2],
+                "agent_version": row[3],
+                "policy_version": row[4],
+                "budget_cents": row[5],
+                "spent_cents": row[6],
+                "status": row[7],
+                "cancel_requested": row[8],
+                "error_code": row[9],
+                "created_at": row[10],
+                "started_at": row[11],
+                "finished_at": row[12],
+                "artifact": None if artifact is None else {"id": str(artifact[0]), "version": artifact[1], "content": artifact[2], "status": artifact[3], "created_at": artifact[4]},
+            }
+
     def decide_ai_artifact(self, run_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
         with self.transaction() as connection:
             cursor = connection.cursor()

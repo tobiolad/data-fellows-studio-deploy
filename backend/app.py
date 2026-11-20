@@ -643,6 +643,26 @@ def cancel_ai_run(run_id: str, request: Request) -> dict:
     unsupported_memory_domain("AI run cancellation")
 
 
+@app.get("/api/ai-runs/{run_id}")
+def get_ai_run(run_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().get_ai_run(UUID(run_id), actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    run = store.ai_runs.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="AI run not found")
+    project = project_for_package(run["work_package_id"])
+    organization_id = organization_for_engagement(project["engagement_id"])
+    if "admin" not in actor.roles and not store.memberships.get((actor.actor_id, organization_id), set()).intersection({"owner", "reviewer"}):
+        raise HTTPException(status_code=403, detail="AI run access is not authorized")
+    return {**run, "artifact": store.artifacts.get(run["artifact_id"])}
+
+
 @app.post("/api/ai-runs/{run_id}/decision")
 def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     actor = identity(request)
