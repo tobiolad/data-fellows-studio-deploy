@@ -48,6 +48,19 @@
           <button id="load-members">View authorized members</button>
         </div>
         <div class="form-grid">
+          <label for="revoke-organization">Organization ID <input id="revoke-organization" placeholder="UUID" /></label>
+          <label for="revoke-member">Member ID <input id="revoke-member" placeholder="Actor ID" /></label>
+          <label for="revoke-role">Role
+            <select id="revoke-role">
+              <option value="client">Client</option>
+              <option value="professional">Professional</option>
+              <option value="reviewer">Reviewer</option>
+              <option value="owner">Owner</option>
+            </select>
+          </label>
+          <button id="revoke-membership">Revoke membership</button>
+        </div>
+        <div class="form-grid">
           <label for="professional-id">Professional ID <input id="professional-id" placeholder="Synthetic professional ID" /></label>
           <button id="load-admissions">Load pending applications</button>
           <button id="approve-professional">Approve professional</button>

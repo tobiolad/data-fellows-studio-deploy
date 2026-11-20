@@ -146,6 +146,21 @@ async function loadMembers() {
   }
 }
 
+async function revokeMembership() {
+  const organizationId = document.querySelector("#revoke-organization").value.trim();
+  const memberId = document.querySelector("#revoke-member").value.trim();
+  const role = document.querySelector("#revoke-role").value;
+  if (!organizationId || !memberId) return showMessage("Complete the organization and member IDs first.", "error");
+  try {
+    await request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/${encodeURIComponent(role)}`, { method: "DELETE" });
+    showMessage(`Membership revoked for ${memberId}.`, "success");
+    document.querySelector("#members-organization").value = organizationId;
+    await loadMembers();
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 async function loadProjects() {
   const id = document.querySelector("#engagement-id").value.trim();
   if (!id) return showMessage("Enter an engagement ID first.", "error");
@@ -269,6 +284,7 @@ document.querySelector("#create-project").addEventListener("click", createProjec
 document.querySelector("#create-package").addEventListener("click", createWorkPackage);
 document.querySelector("#invite-professional-button").addEventListener("click", inviteProfessional);
 document.querySelector("#load-members").addEventListener("click", loadMembers);
+document.querySelector("#revoke-membership").addEventListener("click", revokeMembership);
 document.querySelector("#load-projects").addEventListener("click", loadProjects);
 document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
 document.querySelector("#load-assignments").addEventListener("click", loadAssignments);
