@@ -1,7 +1,10 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import backend.persistence as persistence_module
 from backend.persistence import MIGRATIONS_DIR, PersistenceConfigurationError, PostgresRepository
 
 
@@ -43,6 +46,14 @@ class PostgresIntegrationTests(unittest.TestCase):
             rows = cursor.fetchall()
         self.assertTrue(rows)
         self.assertTrue(all(version and checksum and len(checksum) == 64 for version, checksum in rows))
+
+    def test_changed_applied_migration_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tampered = Path(directory) / "001_initial.sql"
+            tampered.write_text((MIGRATIONS_DIR / "001_initial.sql").read_text(encoding="utf-8") + "\n-- tampered\n", encoding="utf-8")
+            with patch.object(persistence_module, "MIGRATIONS_DIR", Path(directory)):
+                with self.assertRaises(PersistenceConfigurationError):
+                    self.repository.migrate()
 
 
 if __name__ == "__main__":
