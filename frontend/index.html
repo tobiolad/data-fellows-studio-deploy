@@ -47,6 +47,11 @@
           <label for="members-organization">Organization ID <input id="members-organization" placeholder="UUID to inspect" /></label>
           <button id="load-members">View authorized members</button>
         </div>
+        <div class="form-grid">
+          <label for="professional-id">Professional ID <input id="professional-id" placeholder="Synthetic professional ID" /></label>
+          <button id="approve-professional">Approve professional</button>
+          <button id="reject-professional">Reject application</button>
+        </div>
       </section>
       <section class="card" aria-labelledby="workspace-title">
         <h2 id="workspace-title">Workspace</h2>
@@ -63,6 +68,9 @@
           <label for="assignment-id">Assignment ID <input id="assignment-id" placeholder="Invitation ID" /></label>
           <button id="accept-assignment">Accept invitation</button>
           <button id="decline-assignment">Decline invitation</button>
+        </div>
+        <div class="form-grid professional-only">
+          <button id="submit-application">Submit professional application</button>
         </div>
         <div class="form-grid professional-only">
           <label for="deliverable-title">Deliverable title <input id="deliverable-title" placeholder="Reviewed implementation plan" /></label>

@@ -130,6 +130,29 @@ async function loadAssignments() {
   }
 }
 
+async function submitApplication() {
+  try {
+    await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`, { method: "POST", body: "{}" });
+    showMessage("Professional application submitted for review.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function decideProfessional(decision) {
+  const id = document.querySelector("#professional-id").value.trim();
+  if (!id) return showMessage("Enter a professional ID first.", "error");
+  try {
+    await request(`/api/professionals/${encodeURIComponent(id)}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    });
+    showMessage(`Professional ${decision}.`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 async function decideAssignment(decision) {
   const id = document.querySelector("#assignment-id").value.trim();
   if (!id) return showMessage("Enter an assignment ID first.", "error");
@@ -192,6 +215,9 @@ document.querySelector("#load-deliverables").addEventListener("click", loadDeliv
 document.querySelector("#load-assignments").addEventListener("click", loadAssignments);
 document.querySelector("#accept-assignment").addEventListener("click", () => decideAssignment("accept"));
 document.querySelector("#decline-assignment").addEventListener("click", () => decideAssignment("decline"));
+document.querySelector("#submit-application").addEventListener("click", submitApplication);
+document.querySelector("#approve-professional").addEventListener("click", () => decideProfessional("approved"));
+document.querySelector("#reject-professional").addEventListener("click", () => decideProfessional("rejected"));
 document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
 document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
 role.addEventListener("change", syncRole);
