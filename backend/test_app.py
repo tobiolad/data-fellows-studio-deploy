@@ -75,6 +75,21 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(hidden.status_code, 200)
         self.assertEqual(hidden.json(), [])
 
+    def test_membership_revocation_removes_access_and_preserves_an_owner(self) -> None:
+        organization = self.post("/api/organizations", {"name": "Revocation test"}, self.admin)
+        org_id = organization["id"]
+        self.post(f"/api/organizations/{org_id}/members", {"actor_id": "analyst-1", "role": "reviewer"}, self.admin)
+        visible = self.client.get("/api/engagements", headers=auth("analyst-1", "reviewer"))
+        self.assertEqual(visible.status_code, 200)
+
+        revoked = self.client.delete(f"/api/organizations/{org_id}/members/analyst-1/reviewer", headers=self.admin)
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(self.client.get("/api/engagements", headers=auth("analyst-1", "reviewer")).json(), [])
+        final_owner = self.client.delete(f"/api/organizations/{org_id}/members/admin-1/owner", headers=self.admin)
+        self.assertEqual(final_owner.status_code, 409)
+        actions = {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()}
+        self.assertIn("membership.revoked", actions)
+
     def test_real_authentication_is_required_when_test_mode_is_disabled(self) -> None:
         os.environ["STUDIO_TEST_MODE"] = "false"
         try:

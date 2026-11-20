@@ -10,3 +10,5 @@
 | AI service identity | Explicit work package only | Bounded policy | Execute allowed tool | Produce artifact | Never approve itself |
 
 Every API route re-derives organization/project scope from the stored relationship. Caller-supplied organization IDs never grant access.
+
+Organization owners can revoke a membership role through the server-side endpoint. Revocation removes the role before subsequent authorization checks and is audited; the final organization owner cannot be removed.

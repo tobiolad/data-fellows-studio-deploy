@@ -74,7 +74,7 @@ app = FastAPI(title="Data Fellows Studio", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:8100"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -218,6 +218,24 @@ def grant_member(organization_id: str, body: MemberGrant, request: Request) -> d
     store.memberships.setdefault((body.actor_id, organization_id), set()).add(body.role)
     audit_response(actor, "organization_membership", f"{body.actor_id}:{organization_id}", "membership.granted")
     return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
+
+
+@app.delete("/api/organizations/{organization_id}/members/{member_id}/{role}")
+def revoke_member(organization_id: str, member_id: str, role: Literal["client", "professional", "reviewer", "owner"], request: Request) -> dict:
+    actor = identity(request)
+    if organization_id not in store.organizations:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    member(actor, organization_id, "owner")
+    assigned = store.memberships.get((member_id, organization_id), set())
+    if role not in assigned:
+        raise HTTPException(status_code=404, detail="Membership role not found")
+    if role == "owner" and sum("owner" in roles for (candidate, org), roles in store.memberships.items() if org == organization_id and candidate != member_id) == 0:
+        raise HTTPException(status_code=409, detail="The final organization owner cannot be revoked")
+    assigned.remove(role)
+    if not assigned:
+        store.memberships.pop((member_id, organization_id), None)
+    audit_response(actor, "organization_membership", f"{member_id}:{organization_id}", "membership.revoked")
+    return {"actor_id": member_id, "organization_id": organization_id, "role": role, "status": "revoked"}
 
 
 @app.post("/api/professionals/{professional_id}/approve")
