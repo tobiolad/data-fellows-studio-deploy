@@ -130,6 +130,48 @@ class PostgresRepository:
                 for row in cursor.fetchall()
             ]
 
+    def create_project(self, engagement_id: UUID, name: str, actor: str) -> UUID:
+        project_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT organization_id FROM engagements WHERE id = %s", (engagement_id,))
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Engagement not found")
+            self._require_owner(cursor, row[0], actor)
+            cursor.execute(
+                "INSERT INTO projects(id, engagement_id, name, status) VALUES (%s, %s, %s, 'active')",
+                (project_id, engagement_id, name),
+            )
+            self._audit(cursor, row[0], actor, "project.created", "project", str(project_id))
+        return project_id
+
+    def create_work_package(self, project_id: UUID, title: str, acceptance_criteria: list[str], depends_on: list[UUID], actor: str) -> UUID:
+        package_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT e.organization_id FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s",
+                (project_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Project not found")
+            self._require_owner(cursor, row[0], actor)
+            if depends_on:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM work_packages WHERE project_id = %s AND id = ANY(%s::uuid[])",
+                    (project_id, depends_on),
+                )
+                if cursor.fetchone()[0] != len(set(depends_on)):
+                    raise ValueError("Dependencies must be existing work packages in the same project")
+            cursor.execute(
+                "INSERT INTO work_packages(id, project_id, title, acceptance_criteria, status) VALUES (%s, %s, %s, %s, 'unassigned')",
+                (package_id, project_id, title, json.dumps(acceptance_criteria)),
+            )
+            self._audit(cursor, row[0], actor, "work_package.created", "work_package", str(package_id), {"depends_on": [str(item) for item in depends_on]})
+        return package_id
+
     def revoke_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:
             cursor = connection.cursor()

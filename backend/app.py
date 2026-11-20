@@ -182,6 +182,7 @@ class WorkPackageCreate(BaseModel):
     project_id: str
     title: str = Field(min_length=2, max_length=160)
     acceptance_criteria: list[str] = Field(min_length=1, max_length=20)
+    depends_on: list[str] = Field(default_factory=list, max_length=20)
 
 
 class AssignmentCreate(BaseModel):
@@ -329,6 +330,12 @@ def list_engagements(request: Request) -> list[dict]:
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            project_id = postgres_repository().create_project(UUID(body.engagement_id), body.name, actor.actor_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": str(project_id), "engagement_id": body.engagement_id, "name": body.name, "status": "active", "created_at": now()}
     unsupported_memory_domain("projects")
     org_id = organization_for_engagement(body.engagement_id)
     member(actor, org_id, "owner")
@@ -347,6 +354,20 @@ def create_project(body: ProjectCreate, request: Request) -> dict:
 @app.post("/api/work-packages", status_code=status.HTTP_201_CREATED)
 def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            package_id = postgres_repository().create_work_package(
+                UUID(body.project_id),
+                body.title,
+                body.acceptance_criteria,
+                [UUID(value) for value in body.depends_on],
+                actor.actor_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": str(package_id), "project_id": body.project_id, "title": body.title, "acceptance_criteria": body.acceptance_criteria, "dependencies": body.depends_on, "status": "unassigned"}
     unsupported_memory_domain("work packages")
     project = store.projects.get(body.project_id)
     if not project:

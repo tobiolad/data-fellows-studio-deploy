@@ -45,8 +45,20 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         self.assertEqual(engagement.status_code, 201)
         listed = self.client.get("/api/engagements", headers=auth("postgres-client", "client"))
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()[0]["id"], engagement.json()["id"])
-        unsupported = self.client.post("/api/projects", headers=self.admin, json={"engagement_id": engagement.json()["id"], "name": "Not migrated"})
+        self.assertIn(engagement.json()["id"], {item["id"] for item in listed.json()})
+        project = self.client.post("/api/projects", headers=self.admin, json={"engagement_id": engagement.json()["id"], "name": "Persistent project"})
+        self.assertEqual(project.status_code, 201)
+        package = self.client.post(
+            "/api/work-packages",
+            headers=self.admin,
+            json={"project_id": project.json()["id"], "title": "Persistent package", "acceptance_criteria": ["reviewed"]},
+        )
+        self.assertEqual(package.status_code, 201)
+        unsupported = self.client.post(
+            f"/api/work-packages/{package.json()['id']}/assignments",
+            headers=self.admin,
+            json={"professional_id": "not-yet-persisted"},
+        )
         self.assertEqual(unsupported.status_code, 501)
 
 
