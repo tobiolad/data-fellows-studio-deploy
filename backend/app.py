@@ -480,9 +480,9 @@ def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> di
     if "professional" not in store.memberships.get((body.professional_id, org_id), set()):
         raise HTTPException(status_code=403, detail="Professional is not admitted to this organization")
     assignment_id = str(uuid4())
-    store.assignments[assignment_id] = {"id": assignment_id, "work_package_id": package_id, "professional_id": body.professional_id, "status": "accepted"}
+    store.assignments[assignment_id] = {"id": assignment_id, "work_package_id": package_id, "professional_id": body.professional_id, "status": "invited", "expires_at": body.expires_at.isoformat() if body.expires_at else None}
     store.work_packages[package_id]["status"] = "assigned"
-    audit_response(actor, "assignment", assignment_id, "assignment.accepted", org_id)
+    audit_response(actor, "assignment", assignment_id, "assignment.invited", org_id)
     return store.assignments[assignment_id]
 
 
@@ -497,7 +497,59 @@ def accept_assignment(assignment_id: str, request: Request) -> dict:
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"id": assignment_id, "professional_id": actor.actor_id, "status": "accepted"}
-    unsupported_memory_domain("assignments")
+    assignment = store.assignments.get(assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if assignment["professional_id"] != actor.actor_id:
+        raise HTTPException(status_code=403, detail="Only the invited professional may accept")
+    if assignment["status"] != "invited":
+        raise HTTPException(status_code=409, detail="Assignment invitation is no longer active")
+    if assignment["expires_at"] and datetime.fromisoformat(assignment["expires_at"]) <= datetime.now(timezone.utc):
+        assignment["status"] = "expired"
+        raise HTTPException(status_code=409, detail="Assignment invitation has expired")
+    assignment["status"] = "accepted"
+    project = project_for_package(assignment["work_package_id"])
+    audit_response(actor, "assignment", assignment_id, "assignment.accepted", organization_for_engagement(project["engagement_id"]))
+    return assignment
+
+
+@app.post("/api/assignments/{assignment_id}/decline")
+def decline_assignment(assignment_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            postgres_repository().decline_assignment(UUID(assignment_id), actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"id": assignment_id, "status": "declined"}
+    assignment = store.assignments.get(assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if assignment["professional_id"] != actor.actor_id:
+        raise HTTPException(status_code=403, detail="Only the invited professional may decline")
+    if assignment["status"] != "invited":
+        raise HTTPException(status_code=409, detail="Only an active invitation can be declined")
+    assignment["status"] = "declined"
+    project = project_for_package(assignment["work_package_id"])
+    audit_response(actor, "assignment", assignment_id, "assignment.declined", organization_for_engagement(project["engagement_id"]))
+    return assignment
+
+
+@app.get("/api/professionals/{professional_id}/assignments")
+def list_assignments(professional_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().list_assignments(professional_id, actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if actor.actor_id != professional_id and "admin" not in actor.roles:
+        raise HTTPException(status_code=403, detail="Assignment access is not authorized")
+    return [item for item in store.assignments.values() if item["professional_id"] == professional_id]
 
 
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)

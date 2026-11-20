@@ -292,6 +292,44 @@ class PostgresRepository:
             cursor.execute("UPDATE assignments SET status = 'accepted' WHERE id = %s", (assignment_id,))
             self._audit(cursor, organization_id, professional_id, "assignment.accepted", "assignment", str(assignment_id))
 
+    def decline_assignment(self, assignment_id: UUID, professional_id: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT a.status, e.organization_id
+                   FROM assignments a
+                   JOIN work_packages w ON w.id = a.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE a.id = %s AND a.professional_id = %s""",
+                (assignment_id, professional_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Assignment not found")
+            current_status, organization_id = row
+            if current_status != "invited":
+                raise ValueError("Only an active invitation can be declined")
+            cursor.execute("UPDATE assignments SET status = 'declined' WHERE id = %s", (assignment_id,))
+            self._audit(cursor, organization_id, professional_id, "assignment.declined", "assignment", str(assignment_id))
+
+    def list_assignments(self, professional_id: str, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        if actor != professional_id and not admin:
+            raise PermissionError("Assignment access is not authorized")
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT a.id, a.work_package_id, a.professional_id, a.status, a.expires_at, a.created_at
+                   FROM assignments a
+                   WHERE a.professional_id = %s
+                   ORDER BY a.created_at""",
+                (professional_id,),
+            )
+            return [
+                {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5]}
+                for row in cursor.fetchall()
+            ]
+
     def create_ai_run(self, package_id: UUID, requested_by: str, specification: str, budget_cents: int, output: dict[str, Any]) -> tuple[UUID, UUID, UUID]:
         run_id, artifact_id = uuid4(), uuid4()
         with self.transaction() as connection:

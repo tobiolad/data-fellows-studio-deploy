@@ -93,6 +93,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             headers=auth("postgres-professional", "professional"),
         )
         self.assertEqual(accepted.status_code, 200)
+        listed_assignments = self.client.get(
+            "/api/professionals/postgres-professional/assignments",
+            headers=auth("postgres-professional", "professional"),
+        )
+        self.assertEqual(listed_assignments.status_code, 200)
+        self.assertEqual(listed_assignments.json()[0]["status"], "accepted")
         run = self.client.post(
             "/api/ai-runs",
             headers=self.admin,
