@@ -301,6 +301,100 @@ class PostgresRepository:
             self._audit(cursor, organization_id, reviewer_id, f"ai_artifact.{decision}", "ai_artifact", str(artifact_id), {"comment": comment})
             return {"id": str(artifact_id), "run_id": str(run_id), "status": decision, "content": content, "decision_by": reviewer_id, "decision_comment": comment}
 
+    def submit_deliverable(self, package_id: UUID, title: str, content: str, submitted_by: str) -> dict[str, Any]:
+        deliverable_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT e.organization_id FROM work_packages w
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE w.id = %s""",
+                (package_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Work package not found")
+            organization_id = row[0]
+            cursor.execute(
+                """SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('owner', 'client') AND revoked_at IS NULL
+                   UNION SELECT 1 FROM assignments WHERE work_package_id = %s AND professional_id = %s AND status = 'accepted'""",
+                (organization_id, submitted_by, package_id, submitted_by),
+            )
+            if cursor.fetchone() is None:
+                raise PermissionError("Only an authorized delivery resource may submit")
+            cursor.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM deliverables WHERE work_package_id = %s", (package_id,))
+            version = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO deliverables(id, work_package_id, version, title, content, submitted_by, status) VALUES (%s, %s, %s, %s, %s, %s, 'under_review')",
+                (deliverable_id, package_id, version, title, content, submitted_by),
+            )
+            self._audit(cursor, organization_id, submitted_by, "deliverable.submitted", "deliverable", str(deliverable_id))
+            return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "under_review"}
+
+    def review_deliverable(self, deliverable_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT d.work_package_id, d.version, d.title, d.content, d.submitted_by, d.status, e.organization_id
+                   FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id
+                   JOIN projects p ON p.id = w.project_id JOIN engagements e ON e.id = p.engagement_id
+                   WHERE d.id = %s""",
+                (deliverable_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Deliverable not found")
+            package_id, version, title, content, submitted_by, current_status, organization_id = row
+            if submitted_by == reviewer_id:
+                raise ValueError("Independent review is required")
+            cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL", (organization_id, reviewer_id))
+            if cursor.fetchone() is None:
+                raise PermissionError("Reviewer is not authorized for this organization")
+            cursor.execute("UPDATE deliverables SET status = %s WHERE id = %s", (decision, deliverable_id))
+            cursor.execute("INSERT INTO deliverable_reviews(id, deliverable_id, reviewer_id, decision, comment) VALUES (%s, %s, %s, %s, %s)", (uuid4(), deliverable_id, reviewer_id, decision, comment))
+            self._audit(cursor, organization_id, reviewer_id, f"deliverable.{decision}", "deliverable", str(deliverable_id), {"comment": comment})
+            return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": decision, "reviewer": reviewer_id, "comment": comment}
+
+    def accept_deliverable(self, deliverable_id: UUID, client_id: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT d.work_package_id, d.version, d.title, d.content, d.submitted_by, d.status, e.organization_id
+                   FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id
+                   JOIN projects p ON p.id = w.project_id JOIN engagements e ON e.id = p.engagement_id
+                   WHERE d.id = %s""",
+                (deliverable_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Deliverable not found")
+            package_id, version, title, content, submitted_by, status, organization_id = row
+            cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'client' AND revoked_at IS NULL", (organization_id, client_id))
+            if cursor.fetchone() is None:
+                raise PermissionError("Client is not authorized for this organization")
+            if status != "approved":
+                raise ValueError("Only an internally approved deliverable can be accepted")
+            cursor.execute("UPDATE deliverables SET status = 'accepted' WHERE id = %s", (deliverable_id,))
+            self._audit(cursor, organization_id, client_id, "deliverable.client_accepted", "deliverable", str(deliverable_id))
+            return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "accepted", "accepted_by": client_id}
+
+    def complete_project(self, project_id: UUID, actor: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT e.organization_id, p.status FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s", (project_id,))
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Project not found")
+            organization_id, status = row
+            self._require_owner(cursor, organization_id, actor)
+            cursor.execute("SELECT 1 FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id WHERE w.project_id = %s AND d.status = 'accepted'", (project_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("At least one client-accepted deliverable is required")
+            cursor.execute("UPDATE projects SET status = 'completed' WHERE id = %s", (project_id,))
+            self._audit(cursor, organization_id, actor, "project.completed", "project", str(project_id))
+            return {"id": str(project_id), "status": "completed"}
+
     def revoke_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:
             cursor = connection.cursor()

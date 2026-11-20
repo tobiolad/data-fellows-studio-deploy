@@ -522,6 +522,13 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
 @app.post("/api/deliverables", status_code=status.HTTP_201_CREATED)
 def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().submit_deliverable(UUID(body.work_package_id), body.title, body.content, actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     unsupported_memory_domain("deliverables")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
@@ -548,6 +555,15 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
 @app.post("/api/deliverables/{deliverable_id}/review")
 def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().review_deliverable(UUID(deliverable_id), actor.actor_id, body.decision, body.comment)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     unsupported_memory_domain("deliverable reviews")
     deliverable = store.deliverables.get(deliverable_id)
     if not deliverable:
@@ -567,6 +583,15 @@ def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request
 @app.post("/api/deliverables/{deliverable_id}/accept")
 def accept_deliverable(deliverable_id: str, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().accept_deliverable(UUID(deliverable_id), actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     unsupported_memory_domain("client acceptance")
     deliverable = store.deliverables.get(deliverable_id)
     if not deliverable:
@@ -586,6 +611,15 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
 @app.post("/api/projects/{project_id}/complete")
 def complete_project(project_id: str, request: Request) -> dict:
     actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().complete_project(UUID(project_id), actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     unsupported_memory_domain("project completion")
     project = store.projects.get(project_id)
     if not project:

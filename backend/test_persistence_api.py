@@ -66,6 +66,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"actor_id": "postgres-reviewer", "role": "reviewer"},
         )
         self.assertEqual(reviewer.status_code, 201)
+        client = self.client.post(
+            f"/api/organizations/{organization_id}/members",
+            headers=self.admin,
+            json={"actor_id": "postgres-client-user", "role": "client"},
+        )
+        self.assertEqual(client.status_code, 201)
         approval = self.client.post("/api/professionals/postgres-professional/approve", headers=self.admin)
         self.assertEqual(approval.status_code, 200)
         invitation = self.client.post(
@@ -92,6 +98,25 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"decision": "approved", "comment": "Synthetic review complete"},
         )
         self.assertEqual(decision.status_code, 200)
+        deliverable = self.client.post(
+            "/api/deliverables",
+            headers=auth("postgres-professional", "professional"),
+            json={"work_package_id": package.json()["id"], "title": "Persistent deliverable", "content": "Synthetic deliverable content"},
+        )
+        self.assertEqual(deliverable.status_code, 201)
+        review = self.client.post(
+            f"/api/deliverables/{deliverable.json()['id']}/review",
+            headers=auth("postgres-reviewer", "reviewer"),
+            json={"decision": "approved", "comment": "Reviewed synthetic deliverable"},
+        )
+        self.assertEqual(review.status_code, 200)
+        accepted_deliverable = self.client.post(
+            f"/api/deliverables/{deliverable.json()['id']}/accept",
+            headers=auth("postgres-client-user", "client"),
+        )
+        self.assertEqual(accepted_deliverable.status_code, 200)
+        completed = self.client.post(f"/api/projects/{project.json()['id']}/complete", headers=self.admin)
+        self.assertEqual(completed.status_code, 200)
 
 
 if __name__ == "__main__":
