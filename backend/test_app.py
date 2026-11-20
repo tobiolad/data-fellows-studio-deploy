@@ -32,6 +32,7 @@ class StudioLifecycleTests(unittest.TestCase):
     def test_complete_synthetic_managed_delivery_lifecycle(self) -> None:
         organization = self.post("/api/organizations", {"name": "Synthetic Retail Co"}, self.admin)
         org_id = organization["id"]
+        self.assertEqual(self.client.get("/api/organizations", headers=self.admin).status_code, 200)
         for actor_id, role in (("reviewer-1", "reviewer"), ("professional-1", "professional"), ("client-1", "client")):
             self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
         self.post("/api/professionals/professional-1/approve", {}, self.admin)
@@ -97,6 +98,9 @@ class StudioLifecycleTests(unittest.TestCase):
         hidden = self.client.get("/api/engagements", headers=auth("client-2", "client"))
         self.assertEqual(hidden.status_code, 200)
         self.assertEqual(hidden.json(), [])
+        visible_orgs = self.client.get("/api/organizations", headers=auth("client-1", "client"))
+        self.assertEqual(visible_orgs.status_code, 200)
+        self.assertEqual([item["id"] for item in visible_orgs.json()], [first["id"]])
         self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=auth("client-2", "client")).status_code, 403)
 
     def test_professional_cannot_self_approve(self) -> None:

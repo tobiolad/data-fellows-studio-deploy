@@ -88,6 +88,21 @@ class PostgresRepository:
             self._audit(cursor, organization_id, owner_id, "organization.created", "organization", str(organization_id))
         return organization_id
 
+    def list_organizations(self, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if admin:
+                cursor.execute("SELECT id, name, created_at FROM organizations ORDER BY created_at")
+            else:
+                cursor.execute(
+                    """SELECT o.id, o.name, o.created_at FROM organizations o
+                       JOIN memberships m ON m.organization_id = o.id
+                       WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                       ORDER BY o.created_at""",
+                    (actor,),
+                )
+            return [{"id": str(row[0]), "name": row[1], "created_at": row[2]} for row in cursor.fetchall()]
+
     def grant_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:
             cursor = connection.cursor()

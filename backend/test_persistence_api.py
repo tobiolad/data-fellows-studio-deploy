@@ -31,6 +31,7 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         organization = self.client.post("/api/organizations", headers=self.admin, json={"name": "Persistent synthetic org"})
         self.assertEqual(organization.status_code, 201)
         organization_id = organization.json()["id"]
+        self.assertEqual(self.client.get("/api/organizations", headers=self.admin).status_code, 200)
         membership = self.client.post(
             f"/api/organizations/{organization_id}/members",
             headers=self.admin,

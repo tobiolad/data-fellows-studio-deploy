@@ -266,6 +266,20 @@ def create_organization(body: OrganizationCreate, request: Request) -> dict:
     return store.organizations[organization_id]
 
 
+@app.get("/api/organizations")
+def list_organizations(request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        return postgres_repository().list_organizations(actor.actor_id, admin="admin" in actor.roles)
+    if "admin" in actor.roles:
+        return list(store.organizations.values())
+    visible = []
+    for organization_id, organization in store.organizations.items():
+        if store.memberships.get((actor.actor_id, organization_id), set()):
+            visible.append(organization)
+    return visible
+
+
 @app.post("/api/organizations/{organization_id}/members", status_code=status.HTTP_201_CREATED)
 def grant_member(organization_id: str, body: MemberGrant, request: Request) -> dict:
     actor = identity(request)
