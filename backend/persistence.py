@@ -8,6 +8,7 @@ real data. No caller-supplied role or organization is trusted here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -59,14 +60,21 @@ class PostgresRepository:
             raise PersistenceConfigurationError("No Studio migrations were found")
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS studio_schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
+            cursor.execute("CREATE TABLE IF NOT EXISTS studio_schema_migrations (version text PRIMARY KEY, checksum text, applied_at timestamptz NOT NULL DEFAULT now())")
+            cursor.execute("ALTER TABLE studio_schema_migrations ADD COLUMN IF NOT EXISTS checksum text")
             for script in scripts:
                 version = script.name.split("_", 1)[0]
-                cursor.execute("SELECT 1 FROM studio_schema_migrations WHERE version = %s", (version,))
-                if cursor.fetchone():
+                checksum = hashlib.sha256(script.read_bytes()).hexdigest()
+                cursor.execute("SELECT checksum FROM studio_schema_migrations WHERE version = %s", (version,))
+                applied = cursor.fetchone()
+                if applied:
+                    if applied[0] and applied[0] != checksum:
+                        raise PersistenceConfigurationError(f"Migration checksum mismatch for {script.name}")
+                    if not applied[0]:
+                        cursor.execute("UPDATE studio_schema_migrations SET checksum = %s WHERE version = %s", (checksum, version))
                     continue
                 cursor.execute(script.read_text(encoding="utf-8"))
-                cursor.execute("INSERT INTO studio_schema_migrations(version) VALUES (%s)", (version,))
+                cursor.execute("INSERT INTO studio_schema_migrations(version, checksum) VALUES (%s, %s)", (version, checksum))
 
     def create_organization(self, name: str, owner_id: str) -> UUID:
         organization_id = uuid4()

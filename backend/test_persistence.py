@@ -36,6 +36,14 @@ class PostgresIntegrationTests(unittest.TestCase):
         self.repository.migrate()
         self.repository.migrate()
 
+    def test_migrations_record_checksums(self) -> None:
+        with self.repository.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT version, checksum FROM studio_schema_migrations ORDER BY version")
+            rows = cursor.fetchall()
+        self.assertTrue(rows)
+        self.assertTrue(all(version and checksum and len(checksum) == 64 for version, checksum in rows))
+
 
 if __name__ == "__main__":
     unittest.main()
