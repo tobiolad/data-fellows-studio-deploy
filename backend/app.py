@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
 from backend.persistence import PersistenceConfigurationError, PostgresRepository
 
 
@@ -84,17 +85,31 @@ app.add_middleware(
 
 
 def identity(request: Request) -> Identity:
-    """Resolve only the explicit synthetic adapter in local test mode."""
-    if os.getenv("STUDIO_TEST_MODE", "false").lower() != "true":
-        raise HTTPException(status_code=503, detail="Microsoft Entra authentication is not configured")
+    """Use the synthetic adapter only in tests; otherwise validate Entra JWTs."""
     header = request.headers.get("authorization", "")
-    if not header.startswith("Bearer test:"):
+    if os.getenv("STUDIO_TEST_MODE", "false").lower() == "true":
+        if not header.startswith("Bearer test:"):
+            raise HTTPException(status_code=401, detail="A workforce access token is required")
+        parts = header.removeprefix("Bearer test:").split(":", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise HTTPException(status_code=401, detail="Malformed synthetic identity")
+        roles = frozenset(role for role in parts[1].split(",") if role)
+        return Identity(parts[0], roles)
+    if os.getenv("STUDIO_ENTRA_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Microsoft Entra authentication is not configured")
+    if not header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="A workforce access token is required")
-    parts = header.removeprefix("Bearer test:").split(":", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise HTTPException(status_code=401, detail="Malformed synthetic identity")
-    roles = frozenset(role for role in parts[1].split(",") if role)
-    return Identity(parts[0], roles)
+    try:
+        principal = entra_validator().validate(header.removeprefix("Bearer ").strip())
+    except (TokenValidationError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Bearer token validation failed") from exc
+    return Identity(principal.actor_id, principal.roles)
+
+
+@lru_cache(maxsize=1)
+def entra_validator() -> EntraTokenValidator:
+    settings = EntraSettings.from_environment()
+    return EntraTokenValidator(settings, HttpJwksProvider(settings.jwks_url))
 
 
 def postgres_mode() -> bool:
