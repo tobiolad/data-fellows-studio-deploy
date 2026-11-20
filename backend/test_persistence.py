@@ -31,6 +31,10 @@ class PostgresIntegrationTests(unittest.TestCase):
         audit = self.repository.list_audit("owner-1")
         self.assertTrue(any(event["action"] == "membership.revoked" for event in audit))
 
+    def test_migrations_are_idempotent(self) -> None:
+        self.repository.migrate()
+        self.repository.migrate()
+
 
 if __name__ == "__main__":
     unittest.main()

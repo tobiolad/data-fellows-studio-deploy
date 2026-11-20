@@ -58,14 +58,14 @@ class PostgresRepository:
             raise PersistenceConfigurationError("No Studio migrations were found")
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
+            cursor.execute("CREATE TABLE IF NOT EXISTS studio_schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
             for script in scripts:
                 version = script.name.split("_", 1)[0]
-                cursor.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,))
+                cursor.execute("SELECT 1 FROM studio_schema_migrations WHERE version = %s", (version,))
                 if cursor.fetchone():
                     continue
                 cursor.execute(script.read_text(encoding="utf-8"))
-                cursor.execute("INSERT INTO schema_migrations(version) VALUES (%s)", (version,))
+                cursor.execute("INSERT INTO studio_schema_migrations(version) VALUES (%s)", (version,))
 
     def create_organization(self, name: str, owner_id: str) -> UUID:
         organization_id = uuid4()
