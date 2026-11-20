@@ -116,6 +116,19 @@ class PostgresRepository:
             )
             self._audit(cursor, organization_id, actor, "membership.granted", "organization_membership", f"{actor_id}:{organization_id}")
 
+    def list_memberships(self, organization_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if not admin:
+                cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'owner' AND revoked_at IS NULL", (organization_id, actor))
+                if cursor.fetchone() is None:
+                    raise PermissionError("Only an organization owner may view the membership roster")
+            cursor.execute(
+                "SELECT actor_id, role, created_at, revoked_at FROM memberships WHERE organization_id = %s AND revoked_at IS NULL ORDER BY actor_id, role",
+                (organization_id,),
+            )
+            return [{"actor_id": row[0], "role": row[1], "created_at": row[2], "revoked_at": row[3]} for row in cursor.fetchall()]
+
     def create_engagement(self, organization_id: UUID, name: str, objective: str, actor: str) -> UUID:
         engagement_id = uuid4()
         with self.transaction() as connection:

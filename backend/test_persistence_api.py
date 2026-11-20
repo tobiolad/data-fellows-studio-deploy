@@ -38,6 +38,9 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"actor_id": "postgres-client", "role": "client"},
         )
         self.assertEqual(membership.status_code, 201)
+        roster = self.client.get(f"/api/organizations/{organization_id}/members", headers=self.admin)
+        self.assertEqual(roster.status_code, 200)
+        self.assertTrue(any(item["actor_id"] == "postgres-client" for item in roster.json()))
         engagement = self.client.post(
             "/api/engagements",
             headers=self.admin,

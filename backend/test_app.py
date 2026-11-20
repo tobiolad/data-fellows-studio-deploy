@@ -35,6 +35,9 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/organizations", headers=self.admin).status_code, 200)
         for actor_id, role in (("reviewer-1", "reviewer"), ("professional-1", "professional"), ("client-1", "client")):
             self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
+        roster = self.client.get(f"/api/organizations/{org_id}/members", headers=self.admin)
+        self.assertEqual(roster.status_code, 200)
+        self.assertTrue(any(item["actor_id"] == "client-1" and item["role"] == "client" for item in roster.json()))
         self.post("/api/professionals/professional-1/approve", {}, self.admin)
 
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Inventory modernization", "objective": "Reduce stockout investigation time"}, self.admin)
@@ -103,6 +106,7 @@ class StudioLifecycleTests(unittest.TestCase):
         visible_orgs = self.client.get("/api/organizations", headers=auth("client-1", "client"))
         self.assertEqual(visible_orgs.status_code, 200)
         self.assertEqual([item["id"] for item in visible_orgs.json()], [first["id"]])
+        self.assertEqual(self.client.get(f"/api/organizations/{first['id']}/members", headers=auth("client-1", "client")).status_code, 403)
         self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=auth("client-2", "client")).status_code, 403)
 
     def test_professional_cannot_self_approve(self) -> None:

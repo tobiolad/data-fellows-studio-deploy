@@ -294,6 +294,26 @@ def grant_member(organization_id: str, body: MemberGrant, request: Request) -> d
     return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
 
 
+@app.get("/api/organizations/{organization_id}/members")
+def list_members(organization_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().list_memberships(organization_uuid(organization_id), actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if organization_id not in store.organizations:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if "admin" not in actor.roles and "owner" not in store.memberships.get((actor.actor_id, organization_id), set()):
+        raise HTTPException(status_code=403, detail="Only an organization owner may view the membership roster")
+    return [
+        {"actor_id": member_id, "role": role}
+        for (member_id, org_id), roles in store.memberships.items()
+        if org_id == organization_id
+        for role in sorted(roles)
+    ]
+
+
 @app.delete("/api/organizations/{organization_id}/members/{member_id}/{role}")
 def revoke_member(organization_id: str, member_id: str, role: Literal["client", "professional", "reviewer", "owner"], request: Request) -> dict:
     actor = identity(request)
