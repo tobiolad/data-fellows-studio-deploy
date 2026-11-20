@@ -173,15 +173,34 @@ class PostgresRepository:
             self._audit(cursor, row[0], actor, "work_package.created", "work_package", str(package_id), {"depends_on": [str(item) for item in depends_on]})
         return package_id
 
-    def approve_professional(self, professional_id: str, actor: str) -> None:
+    def submit_professional_application(self, professional_id: str, actor: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO professional_admissions(professional_id, status)
+                   VALUES (%s, 'pending')
+                   ON CONFLICT (professional_id) DO UPDATE
+                   SET status = 'pending', decided_by = NULL, decided_at = NULL""",
+                (professional_id,),
+            )
+            self._audit(cursor, None, actor, "professional.application_submitted", "professional", professional_id)
+
+    def decide_professional(self, professional_id: str, status: str, actor: str) -> None:
+        if status not in {"approved", "rejected", "revoked"}:
+            raise ValueError("Unsupported professional decision")
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
                 """INSERT INTO professional_admissions(professional_id, status, decided_by, decided_at)
-                   VALUES (%s, 'approved', %s, now())
-                   ON CONFLICT (professional_id) DO UPDATE SET status = 'approved', decided_by = EXCLUDED.decided_by, decided_at = now()""",
-                (professional_id, actor),
+                   VALUES (%s, %s, %s, now())
+                   ON CONFLICT (professional_id) DO UPDATE SET status = EXCLUDED.status, decided_by = EXCLUDED.decided_by, decided_at = now()""",
+                (professional_id, status, actor),
             )
+            self._audit(cursor, None, actor, f"professional.{status}", "professional", professional_id)
+
+    def approve_professional(self, professional_id: str, actor: str) -> None:
+        """Compatibility wrapper for the original approval endpoint."""
+        self.decide_professional(professional_id, "approved", actor)
 
     def assign_work(self, package_id: UUID, professional_id: str, expires_at: datetime | None, actor: str) -> UUID:
         assignment_id = uuid4()

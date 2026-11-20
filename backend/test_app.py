@@ -75,6 +75,24 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(hidden.status_code, 200)
         self.assertEqual(hidden.json(), [])
 
+    def test_professional_cannot_self_approve(self) -> None:
+        response = self.client.post(
+            "/api/professionals/professional-1/approve",
+            headers=self.professional,
+        )
+        self.assertEqual(response.status_code, 403)
+        application = self.client.post(
+            "/api/professionals/professional-1/application",
+            headers=self.professional,
+        )
+        self.assertEqual(application.status_code, 201)
+        decision = self.client.post(
+            "/api/professionals/professional-1/decision",
+            headers=self.admin,
+            json={"decision": "approved"},
+        )
+        self.assertEqual(decision.status_code, 200)
+
     def test_membership_revocation_removes_access_and_preserves_an_owner(self) -> None:
         organization = self.post("/api/organizations", {"name": "Revocation test"}, self.admin)
         org_id = organization["id"]

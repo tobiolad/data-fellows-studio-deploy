@@ -291,14 +291,44 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
     return {"actor_id": member_id, "organization_id": organization_id, "role": role, "status": "revoked"}
 
 
+@app.post("/api/professionals/{professional_id}/application", status_code=status.HTTP_201_CREATED)
+def submit_professional_application(professional_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if actor.actor_id != professional_id and "admin" not in actor.roles:
+        raise HTTPException(status_code=403, detail="A professional may submit only their own application")
+    if postgres_mode():
+        postgres_repository().submit_professional_application(professional_id, actor.actor_id)
+        return {"professional_id": professional_id, "status": "pending"}
+    store.approved_professionals.discard(professional_id)
+    store.event(actor, "professional.application_submitted", "professional", professional_id)
+    return {"professional_id": professional_id, "status": "pending"}
+
+
+@app.post("/api/professionals/{professional_id}/decision")
+def decide_professional(professional_id: str, body: Decision, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if body.decision not in {"approved", "rejected"}:
+        raise HTTPException(status_code=422, detail="Professional decisions must be approved or rejected")
+    if postgres_mode():
+        postgres_repository().decide_professional(professional_id, body.decision, actor.actor_id)
+        return {"professional_id": professional_id, "status": body.decision}
+    if body.decision == "approved":
+        store.approved_professionals.add(professional_id)
+    else:
+        store.approved_professionals.discard(professional_id)
+    audit_response(actor, "professional", professional_id, f"professional.{body.decision}")
+    return {"professional_id": professional_id, "status": body.decision}
+
+
 @app.post("/api/professionals/{professional_id}/approve")
 def approve_professional(professional_id: str, request: Request) -> dict:
+    """Compatibility endpoint retained for existing synthetic clients."""
     actor = identity(request)
+    require_global(actor, "admin")
     if postgres_mode():
         postgres_repository().approve_professional(professional_id, actor.actor_id)
         return {"professional_id": professional_id, "status": "approved"}
-    unsupported_memory_domain("professional admissions")
-    require_global(actor, "admin")
     store.approved_professionals.add(professional_id)
     audit_response(actor, "professional", professional_id, "professional.approved")
     return {"professional_id": professional_id, "status": "approved"}
