@@ -88,6 +88,53 @@ async function createEngagement() {
   }
 }
 
+async function createProject() {
+  const body = {
+    engagement_id: document.querySelector("#project-engagement").value.trim(),
+    name: document.querySelector("#project-name").value.trim(),
+  };
+  if (Object.values(body).some((value) => !value)) return showMessage("Complete the engagement and project name first.", "error");
+  try {
+    const project = await request("/api/projects", { method: "POST", body: JSON.stringify(body) });
+    document.querySelector("#project-id").value = project.id;
+    showMessage(`Project created: ${project.id}`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function createWorkPackage() {
+  const title = document.querySelector("#package-title").value.trim();
+  const projectId = document.querySelector("#package-project").value.trim();
+  const criteria = document.querySelector("#package-criteria").value.trim();
+  if (!projectId || !title || !criteria) return showMessage("Complete the project, title and acceptance criteria first.", "error");
+  try {
+    const workPackage = await request("/api/work-packages", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, title, acceptance_criteria: criteria.split(",").map((item) => item.trim()).filter(Boolean) }),
+    });
+    document.querySelector("#package-id").value = workPackage.id;
+    showMessage(`Work package created: ${workPackage.id}`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function inviteProfessional() {
+  const packageId = document.querySelector("#invite-package").value.trim();
+  const professionalId = document.querySelector("#invite-professional").value.trim();
+  if (!packageId || !professionalId) return showMessage("Complete the work package and professional ID first.", "error");
+  try {
+    const assignment = await request(`/api/work-packages/${encodeURIComponent(packageId)}/assignments`, {
+      method: "POST",
+      body: JSON.stringify({ professional_id: professionalId }),
+    });
+    showMessage(`Invitation created: ${assignment.id}`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 async function loadMembers() {
   const id = document.querySelector("#members-organization").value.trim();
   if (!id) return showMessage("Enter an organization ID first.", "error");
@@ -209,6 +256,9 @@ function syncRole() {
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#create-organization").addEventListener("click", createOrganization);
 document.querySelector("#create-engagement").addEventListener("click", createEngagement);
+document.querySelector("#create-project").addEventListener("click", createProject);
+document.querySelector("#create-package").addEventListener("click", createWorkPackage);
+document.querySelector("#invite-professional-button").addEventListener("click", inviteProfessional);
 document.querySelector("#load-members").addEventListener("click", loadMembers);
 document.querySelector("#load-projects").addEventListener("click", loadProjects);
 document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
