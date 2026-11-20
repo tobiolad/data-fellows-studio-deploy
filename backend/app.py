@@ -37,6 +37,7 @@ class Store:
     organizations: dict[str, dict] = field(default_factory=dict)
     memberships: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     approved_professionals: set[str] = field(default_factory=set)
+    professional_admissions: dict[str, dict] = field(default_factory=dict)
     engagements: dict[str, dict] = field(default_factory=dict)
     projects: dict[str, dict] = field(default_factory=dict)
     work_packages: dict[str, dict] = field(default_factory=dict)
@@ -63,6 +64,7 @@ class Store:
         self.organizations.clear()
         self.memberships.clear()
         self.approved_professionals.clear()
+        self.professional_admissions.clear()
         self.engagements.clear()
         self.projects.clear()
         self.work_packages.clear()
@@ -349,8 +351,30 @@ def submit_professional_application(professional_id: str, request: Request) -> d
         postgres_repository().submit_professional_application(professional_id, actor.actor_id)
         return {"professional_id": professional_id, "status": "pending"}
     store.approved_professionals.discard(professional_id)
+    store.professional_admissions[professional_id] = {
+        "professional_id": professional_id,
+        "status": "pending",
+        "decided_by": None,
+        "decided_at": None,
+        "created_at": now(),
+    }
     store.event(actor, "professional.application_submitted", "professional", professional_id)
     return {"professional_id": professional_id, "status": "pending"}
+
+
+@app.get("/api/professionals/admissions")
+def list_professional_admissions(
+    request: Request,
+    status_filter: Literal["pending", "approved", "rejected", "revoked"] | None = None,
+) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        return postgres_repository().list_professional_admissions(status_filter)
+    records = list(store.professional_admissions.values())
+    if status_filter:
+        records = [record for record in records if record["status"] == status_filter]
+    return sorted(records, key=lambda record: (record["created_at"], record["professional_id"]))
 
 
 @app.post("/api/professionals/{professional_id}/decision")
@@ -366,6 +390,14 @@ def decide_professional(professional_id: str, body: Decision, request: Request) 
         store.approved_professionals.add(professional_id)
     else:
         store.approved_professionals.discard(professional_id)
+    created_at = store.professional_admissions.get(professional_id, {}).get("created_at", now())
+    store.professional_admissions[professional_id] = {
+        "professional_id": professional_id,
+        "status": body.decision,
+        "decided_by": actor.actor_id,
+        "decided_at": now(),
+        "created_at": created_at,
+    }
     audit_response(actor, "professional", professional_id, f"professional.{body.decision}")
     return {"professional_id": professional_id, "status": body.decision}
 

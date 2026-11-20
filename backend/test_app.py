@@ -127,6 +127,18 @@ class StudioLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(decision.status_code, 200)
 
+    def test_admission_queue_is_admin_only_and_tracks_decisions(self) -> None:
+        submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)
+        self.assertEqual(submitted.status_code, 201)
+        pending = self.client.get("/api/professionals/admissions?status_filter=pending", headers=self.admin)
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.json()[0]["professional_id"], "professional-1")
+        self.assertEqual(self.client.get("/api/professionals/admissions", headers=self.professional).status_code, 403)
+        self.client.post("/api/professionals/professional-1/decision", headers=self.admin, json={"decision": "approved"})
+        approved = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json()[0]["status"], "approved")
+
     def test_revision_requested_creates_immutable_successor(self) -> None:
         organization = self.post("/api/organizations", {"name": "Revision test org"}, self.admin)
         org_id = organization["id"]

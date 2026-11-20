@@ -296,6 +296,25 @@ class PostgresRepository:
             )
             self._audit(cursor, None, actor, f"professional.{status}", "professional", professional_id)
 
+    def list_professional_admissions(self, status: str | None = None) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if status:
+                cursor.execute(
+                    """SELECT professional_id, status, decided_by, decided_at, created_at
+                       FROM professional_admissions WHERE status = %s ORDER BY created_at, professional_id""",
+                    (status,),
+                )
+            else:
+                cursor.execute(
+                    """SELECT professional_id, status, decided_by, decided_at, created_at
+                       FROM professional_admissions ORDER BY created_at, professional_id"""
+                )
+            return [
+                {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]}
+                for row in cursor.fetchall()
+            ]
+
     def approve_professional(self, professional_id: str, actor: str) -> None:
         """Compatibility wrapper for the original approval endpoint."""
         self.decide_professional(professional_id, "approved", actor)

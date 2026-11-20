@@ -86,6 +86,9 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         self.assertEqual(client.status_code, 201)
         approval = self.client.post("/api/professionals/postgres-professional/approve", headers=self.admin)
         self.assertEqual(approval.status_code, 200)
+        admissions = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
+        self.assertEqual(admissions.status_code, 200)
+        self.assertTrue(any(item["professional_id"] == "postgres-professional" for item in admissions.json()))
         self.assertEqual(
             self.client.post(
                 "/api/professionals/postgres-professional/approve",

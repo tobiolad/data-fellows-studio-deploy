@@ -200,6 +200,15 @@ async function decideProfessional(decision) {
   }
 }
 
+async function loadAdmissions() {
+  try {
+    showRecords("Professional admission queue", await request("/api/professionals/admissions?status_filter=pending"));
+    showMessage("Pending professional applications loaded.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 async function decideAssignment(decision) {
   const id = document.querySelector("#assignment-id").value.trim();
   if (!id) return showMessage("Enter an assignment ID first.", "error");
@@ -268,6 +277,7 @@ document.querySelector("#decline-assignment").addEventListener("click", () => de
 document.querySelector("#submit-application").addEventListener("click", submitApplication);
 document.querySelector("#approve-professional").addEventListener("click", () => decideProfessional("approved"));
 document.querySelector("#reject-professional").addEventListener("click", () => decideProfessional("rejected"));
+document.querySelector("#load-admissions").addEventListener("click", loadAdmissions);
 document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
 document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
 role.addEventListener("change", syncRole);
