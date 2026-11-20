@@ -110,10 +110,44 @@ async function loadDeliverables() {
   }
 }
 
+async function submitDeliverable() {
+  const body = {
+    work_package_id: document.querySelector("#package-id").value.trim(),
+    title: document.querySelector("#deliverable-title").value.trim(),
+    content: document.querySelector("#deliverable-content").value.trim(),
+  };
+  if (Object.values(body).some((value) => !value)) return showMessage("Complete the work package, title and content first.", "error");
+  try {
+    const deliverable = await request("/api/deliverables", { method: "POST", body: JSON.stringify(body) });
+    document.querySelector("#deliverable-id").value = deliverable.id;
+    showMessage(`Deliverable version ${deliverable.version} submitted for review.`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function acceptDeliverable() {
+  const id = document.querySelector("#deliverable-id").value.trim();
+  if (!id) return showMessage("Enter a deliverable ID first.", "error");
+  try {
+    await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" });
+    showMessage("Approved deliverable accepted by the client.", "success");
+    await loadDeliverables();
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
 function syncRole() {
   actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`;
   document.querySelectorAll(".admin-only").forEach((element) => {
     element.hidden = role.value !== "admin";
+  });
+  document.querySelectorAll(".professional-only").forEach((element) => {
+    element.hidden = role.value !== "professional";
+  });
+  document.querySelectorAll(".client-only").forEach((element) => {
+    element.hidden = role.value !== "client";
   });
 }
 
@@ -122,5 +156,7 @@ document.querySelector("#create-organization").addEventListener("click", createO
 document.querySelector("#create-engagement").addEventListener("click", createEngagement);
 document.querySelector("#load-projects").addEventListener("click", loadProjects);
 document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
+document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
+document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
 role.addEventListener("change", syncRole);
 syncRole();

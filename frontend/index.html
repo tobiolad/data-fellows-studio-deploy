@@ -54,6 +54,15 @@
           <label for="package-id">Work package ID <input id="package-id" placeholder="UUID" /></label>
           <button id="load-deliverables">Load visible deliverables</button>
         </div>
+        <div class="form-grid professional-only">
+          <label for="deliverable-title">Deliverable title <input id="deliverable-title" placeholder="Reviewed implementation plan" /></label>
+          <label for="deliverable-content">Deliverable content <input id="deliverable-content" placeholder="Synthetic, reviewable work product" /></label>
+          <button id="submit-deliverable">Submit deliverable version</button>
+        </div>
+        <div class="form-grid client-only">
+          <label for="deliverable-id">Deliverable ID <input id="deliverable-id" placeholder="UUID from the visible list" /></label>
+          <button id="accept-deliverable">Accept approved deliverable</button>
+        </div>
         <div id="identity-status" class="status" role="status">Choose a synthetic identity and refresh.</div>
         <div id="workspace-results" class="results" aria-live="polite"></div>
       </section>
