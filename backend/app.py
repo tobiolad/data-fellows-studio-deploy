@@ -384,7 +384,18 @@ def list_projects(engagement_id: str, request: Request) -> list[dict]:
     if not engagement:
         raise HTTPException(status_code=404, detail="Engagement not found")
     if "admin" not in actor.roles:
-        member(actor, engagement["organization_id"], "owner", "reviewer", "client")
+        organization_id = engagement["organization_id"]
+        roles = store.memberships.get((actor.actor_id, organization_id), set())
+        assigned = any(
+            assignment["professional_id"] == actor.actor_id
+            and assignment["status"] == "accepted"
+            and store.work_packages.get(assignment["work_package_id"], {}).get("project_id") in {
+                project["id"] for project in store.projects.values() if project["engagement_id"] == engagement_id
+            }
+            for assignment in store.assignments.values()
+        )
+        if not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
+            raise HTTPException(status_code=403, detail="Project access is not authorized")
     return [project for project in store.projects.values() if project["engagement_id"] == engagement_id]
 
 
