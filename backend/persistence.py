@@ -202,8 +202,38 @@ class PostgresRepository:
                 "INSERT INTO work_packages(id, project_id, title, acceptance_criteria, status) VALUES (%s, %s, %s, %s, 'unassigned')",
                 (package_id, project_id, title, json.dumps(acceptance_criteria)),
             )
+            for dependency_id in set(depends_on):
+                cursor.execute(
+                    "INSERT INTO work_package_dependencies(work_package_id, depends_on_id) VALUES (%s, %s)",
+                    (package_id, dependency_id),
+                )
             self._audit(cursor, row[0], actor, "work_package.created", "work_package", str(package_id), {"depends_on": [str(item) for item in depends_on]})
         return package_id
+
+    def list_work_packages(self, project_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT e.organization_id FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s", (project_id,))
+            project = cursor.fetchone()
+            if project is None:
+                raise LookupError("Project not found")
+            organization_id = project[0]
+            if not admin:
+                cursor.execute(
+                    """SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL AND role IN ('owner', 'reviewer', 'client')
+                       UNION SELECT 1 FROM assignments a JOIN work_packages w ON w.id = a.work_package_id
+                       WHERE w.project_id = %s AND a.professional_id = %s AND a.status = 'accepted'
+                         AND (a.expires_at IS NULL OR a.expires_at > now())""",
+                    (organization_id, actor, project_id, actor),
+                )
+                if cursor.fetchone() is None:
+                    raise PermissionError("Work package access is not authorized")
+            cursor.execute("SELECT id, project_id, title, acceptance_criteria, status, created_at FROM work_packages WHERE project_id = %s ORDER BY created_at", (project_id,))
+            result = []
+            for row in cursor.fetchall():
+                cursor.execute("SELECT depends_on_id FROM work_package_dependencies WHERE work_package_id = %s ORDER BY depends_on_id", (row[0],))
+                result.append({"id": str(row[0]), "project_id": str(row[1]), "title": row[2], "acceptance_criteria": row[3], "status": row[4], "created_at": row[5], "depends_on": [str(item[0]) for item in cursor.fetchall()]})
+            return result
 
     def submit_professional_application(self, professional_id: str, actor: str) -> None:
         with self.transaction() as connection:

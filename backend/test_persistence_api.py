@@ -55,6 +55,13 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"project_id": project.json()["id"], "title": "Persistent package", "acceptance_criteria": ["reviewed"]},
         )
         self.assertEqual(package.status_code, 201)
+        dependent_package = self.client.post(
+            "/api/work-packages",
+            headers=self.admin,
+            json={"project_id": project.json()["id"], "title": "Persistent dependent package", "acceptance_criteria": ["reviewed"], "depends_on": [package.json()["id"]]},
+        )
+        self.assertEqual(dependent_package.status_code, 201)
+        self.assertEqual(self.client.get(f"/api/projects/{project.json()['id']}/work-packages", headers=self.admin).status_code, 200)
         professional = self.client.post(
             f"/api/organizations/{organization_id}/members",
             headers=self.admin,

@@ -39,6 +39,8 @@ class StudioLifecycleTests(unittest.TestCase):
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Inventory modernization", "objective": "Reduce stockout investigation time"}, self.admin)
         project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Synthetic delivery"}, self.admin)
         package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Prepare diagnostic plan", "acceptance_criteria": ["Plan is reviewed", "Steps are bounded"]}, self.admin)
+        dependent = self.post("/api/work-packages", {"project_id": project["id"], "title": "Validate delivery", "acceptance_criteria": ["Validation complete"], "depends_on": [package["id"]]}, self.admin)
+        self.assertEqual(dependent["depends_on"], [package["id"]])
         assignment = self.post(f"/api/work-packages/{package['id']}/assignments", {"professional_id": "professional-1"}, self.admin)
         self.assertEqual(assignment["status"], "invited")
         assignments = self.client.get("/api/professionals/professional-1/assignments", headers=self.professional)
@@ -49,6 +51,9 @@ class StudioLifecycleTests(unittest.TestCase):
         accepted_assignment = self.post(f"/api/assignments/{assignment['id']}/accept", {}, self.professional)
         self.assertEqual(accepted_assignment["status"], "accepted")
         self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=self.professional).status_code, 200)
+        packages = self.client.get(f"/api/projects/{project['id']}/work-packages", headers=self.professional)
+        self.assertEqual(packages.status_code, 200)
+        self.assertEqual(packages.json()[1]["depends_on"], [package["id"]])
 
         run = self.post("/api/ai-runs", {"work_package_id": package["id"], "specification": "Create a bounded implementation work breakdown for the approved inventory problem."}, self.admin)
         self.assertEqual(run["agent"], "synthetic-planner-v1")

@@ -463,6 +463,12 @@ def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Project not found")
     org_id = organization_for_engagement(project["engagement_id"])
     member(actor, org_id, "owner")
+    if len(set(body.depends_on)) != len(body.depends_on) or body.project_id in body.depends_on:
+        raise HTTPException(status_code=422, detail="Dependencies must be unique and cannot reference the package itself")
+    for dependency_id in body.depends_on:
+        dependency = store.work_packages.get(dependency_id)
+        if not dependency or dependency["project_id"] != body.project_id:
+            raise HTTPException(status_code=422, detail="Dependencies must be existing work packages in the same project")
     package_id = str(uuid4())
     store.work_packages[package_id] = {
         "id": package_id,
@@ -470,9 +476,31 @@ def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
         "title": body.title,
         "acceptance_criteria": body.acceptance_criteria,
         "status": "unassigned",
+        "depends_on": list(body.depends_on),
     }
     audit_response(actor, "work_package", package_id, "work_package.created", org_id)
     return store.work_packages[package_id]
+
+
+@app.get("/api/projects/{project_id}/work-packages")
+def list_work_packages(project_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().list_work_packages(UUID(project_id), actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    project = store.projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    organization_id = organization_for_engagement(project["engagement_id"])
+    roles = store.memberships.get((actor.actor_id, organization_id), set())
+    assigned = any(item["professional_id"] == actor.actor_id and item["status"] == "accepted" and store.work_packages.get(item["work_package_id"], {}).get("project_id") == project_id for item in store.assignments.values())
+    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
+        raise HTTPException(status_code=403, detail="Work package access is not authorized")
+    return [item for item in store.work_packages.values() if item["project_id"] == project_id]
 
 
 @app.post("/api/work-packages/{package_id}/assignments", status_code=status.HTTP_201_CREATED)
