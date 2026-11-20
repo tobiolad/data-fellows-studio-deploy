@@ -147,6 +147,38 @@ class PostgresRepository:
             self._audit(cursor, row[0], actor, "project.created", "project", str(project_id))
         return project_id
 
+    def list_projects(self, engagement_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT organization_id FROM engagements WHERE id = %s", (engagement_id,))
+            engagement = cursor.fetchone()
+            if engagement is None:
+                raise LookupError("Engagement not found")
+            organization_id = engagement[0]
+            if not admin:
+                cursor.execute(
+                    """SELECT 1 FROM memberships
+                       WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL
+                         AND role IN ('owner', 'reviewer', 'client')
+                       UNION SELECT 1 FROM assignments a
+                       JOIN work_packages w ON w.id = a.work_package_id
+                       JOIN projects p ON p.id = w.project_id
+                       WHERE p.engagement_id = %s AND a.professional_id = %s
+                         AND a.status = 'accepted'
+                         AND (a.expires_at IS NULL OR a.expires_at > now())""",
+                    (organization_id, actor, engagement_id, actor),
+                )
+                if cursor.fetchone() is None:
+                    raise PermissionError("Project access is not authorized")
+            cursor.execute(
+                "SELECT id, engagement_id, name, status, created_at FROM projects WHERE engagement_id = %s ORDER BY created_at",
+                (engagement_id,),
+            )
+            return [
+                {"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4]}
+                for row in cursor.fetchall()
+            ]
+
     def create_work_package(self, project_id: UUID, title: str, acceptance_criteria: list[str], depends_on: list[UUID], actor: str) -> UUID:
         package_id = uuid4()
         with self.transaction() as connection:
@@ -373,6 +405,48 @@ class PostgresRepository:
             )
             self._audit(cursor, organization_id, submitted_by, "deliverable.submitted", "deliverable", str(deliverable_id))
             return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "under_review"}
+
+    def list_deliverables(self, package_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT e.organization_id FROM work_packages w
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
+                   WHERE w.id = %s""",
+                (package_id,),
+            )
+            package = cursor.fetchone()
+            if package is None:
+                raise LookupError("Work package not found")
+            organization_id = package[0]
+            role = None
+            if not admin:
+                cursor.execute(
+                    "SELECT role FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'reviewer' THEN 2 WHEN 'client' THEN 3 ELSE 4 END LIMIT 1",
+                    (organization_id, actor),
+                )
+                membership = cursor.fetchone()
+                if membership:
+                    role = membership[0]
+                if role is None:
+                    cursor.execute(
+                        "SELECT 1 FROM assignments WHERE work_package_id = %s AND professional_id = %s AND status = 'accepted' AND (expires_at IS NULL OR expires_at > now())",
+                        (package_id, actor),
+                    )
+                    if cursor.fetchone() is None:
+                        raise PermissionError("Deliverable access is not authorized")
+                    role = "professional"
+            query = "SELECT id, work_package_id, version, title, content, submitted_by, status, created_at FROM deliverables WHERE work_package_id = %s"
+            params: list[Any] = [package_id]
+            if role == "client":
+                query += " AND status IN ('approved', 'accepted')"
+            query += " ORDER BY version"
+            cursor.execute(query, params)
+            return [
+                {"id": str(row[0]), "work_package_id": str(row[1]), "version": row[2], "title": row[3], "content": row[4], "submitted_by": row[5], "status": row[6], "created_at": row[7]}
+                for row in cursor.fetchall()
+            ]
 
     def review_deliverable(self, deliverable_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
         with self.transaction() as connection:

@@ -48,6 +48,7 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         self.assertIn(engagement.json()["id"], {item["id"] for item in listed.json()})
         project = self.client.post("/api/projects", headers=self.admin, json={"engagement_id": engagement.json()["id"], "name": "Persistent project"})
         self.assertEqual(project.status_code, 201)
+        self.assertEqual(self.client.get(f"/api/engagements/{engagement.json()['id']}/projects", headers=self.admin).status_code, 200)
         package = self.client.post(
             "/api/work-packages",
             headers=self.admin,
@@ -124,6 +125,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             headers=auth("postgres-client-user", "client"),
         )
         self.assertEqual(accepted_deliverable.status_code, 200)
+        visible_deliverables = self.client.get(
+            f"/api/work-packages/{package.json()['id']}/deliverables",
+            headers=auth("postgres-client-user", "client"),
+        )
+        self.assertEqual(visible_deliverables.status_code, 200)
+        self.assertEqual(len(visible_deliverables.json()), 1)
         completed = self.client.post(f"/api/projects/{project.json()['id']}/complete", headers=self.admin)
         self.assertEqual(completed.status_code, 200)
 

@@ -370,6 +370,24 @@ def list_engagements(request: Request) -> list[dict]:
     return visible
 
 
+@app.get("/api/engagements/{engagement_id}/projects")
+def list_projects(engagement_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().list_projects(UUID(engagement_id), actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    engagement = store.engagements.get(engagement_id)
+    if not engagement:
+        raise HTTPException(status_code=404, detail="Engagement not found")
+    if "admin" not in actor.roles:
+        member(actor, engagement["organization_id"], "owner", "reviewer", "client")
+    return [project for project in store.projects.values() if project["engagement_id"] == engagement_id]
+
+
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, request: Request) -> dict:
     actor = identity(request)
@@ -606,6 +624,28 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
     store.deliverables[deliverable_id] = record
     audit_response(actor, "deliverable", deliverable_id, "deliverable.submitted", org_id)
     return record
+
+
+@app.get("/api/work-packages/{package_id}/deliverables")
+def list_deliverables(package_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().list_deliverables(UUID(package_id), actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    project = project_for_package(package_id)
+    organization_id = organization_for_engagement(project["engagement_id"])
+    roles = store.memberships.get((actor.actor_id, organization_id), set())
+    assigned = any(item["work_package_id"] == package_id and item["professional_id"] == actor.actor_id and item["status"] == "accepted" for item in store.assignments.values())
+    if "admin" not in actor.roles and not roles and not assigned:
+        raise HTTPException(status_code=403, detail="Deliverable access is not authorized")
+    deliverables = [item for item in store.deliverables.values() if item["work_package_id"] == package_id]
+    if "client" in roles and "owner" not in roles and "reviewer" not in roles:
+        deliverables = [item for item in deliverables if item["status"] in {"approved", "accepted"}]
+    return sorted(deliverables, key=lambda item: item["version"])
 
 
 @app.post("/api/deliverables/{deliverable_id}/review")

@@ -51,6 +51,8 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(review["deliverable"]["status"], "approved")
         accepted = self.post(f"/api/deliverables/{deliverable['id']}/accept", {}, self.client_user)
         self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=self.client_user).status_code, 200)
+        self.assertEqual(len(self.client.get(f"/api/work-packages/{package['id']}/deliverables", headers=self.client_user).json()), 1)
         completed = self.post(f"/api/projects/{project['id']}/complete", {}, self.admin)
         self.assertEqual(completed["status"], "completed")
 
@@ -74,6 +76,7 @@ class StudioLifecycleTests(unittest.TestCase):
         hidden = self.client.get("/api/engagements", headers=auth("client-2", "client"))
         self.assertEqual(hidden.status_code, 200)
         self.assertEqual(hidden.json(), [])
+        self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=auth("client-2", "client")).status_code, 403)
 
     def test_professional_cannot_self_approve(self) -> None:
         response = self.client.post(
