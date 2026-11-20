@@ -40,9 +40,9 @@ function showRecords(title, records) {
     records.forEach((record) => {
       const item = document.createElement("li");
       const name = document.createElement("strong");
-      name.textContent = record.name || record.title || `Version ${record.version}`;
+      name.textContent = record.name || record.title || record.actor_id || `Version ${record.version}`;
       const details = document.createElement("span");
-      details.textContent = [record.status, record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
+      details.textContent = [record.role, record.status, record.revoked_at ? "revoked" : "active", record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
       item.append(name, details);
       list.append(item);
     });
@@ -83,6 +83,17 @@ async function createEngagement() {
     const engagement = await request("/api/engagements", { method: "POST", body: JSON.stringify(body) });
     document.querySelector("#engagement-id").value = engagement.id;
     showMessage(`Engagement created: ${engagement.id}`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function loadMembers() {
+  const id = document.querySelector("#members-organization").value.trim();
+  if (!id) return showMessage("Enter an organization ID first.", "error");
+  try {
+    showRecords("Authorized membership roster", await request(`/api/organizations/${encodeURIComponent(id)}/members`));
+    showMessage("Membership roster loaded.", "success");
   } catch (error) {
     showMessage(error.message, "error");
   }
@@ -154,6 +165,7 @@ function syncRole() {
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#create-organization").addEventListener("click", createOrganization);
 document.querySelector("#create-engagement").addEventListener("click", createEngagement);
+document.querySelector("#load-members").addEventListener("click", loadMembers);
 document.querySelector("#load-projects").addEventListener("click", loadProjects);
 document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
 document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
