@@ -92,6 +92,44 @@ class PostgresRepository:
             )
             self._audit(cursor, organization_id, actor, "membership.granted", "organization_membership", f"{actor_id}:{organization_id}")
 
+    def create_engagement(self, organization_id: UUID, name: str, objective: str, actor: str) -> UUID:
+        engagement_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            self._require_owner(cursor, organization_id, actor)
+            cursor.execute(
+                "INSERT INTO engagements(id, organization_id, name, objective, status) VALUES (%s, %s, %s, %s, 'authorized')",
+                (engagement_id, organization_id, name, objective),
+            )
+            self._audit(cursor, organization_id, actor, "engagement.created", "engagement", str(engagement_id))
+        return engagement_id
+
+    def list_engagements(self, actor_id: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if admin:
+                cursor.execute("SELECT id, organization_id, name, objective, status, created_at FROM engagements ORDER BY created_at")
+            else:
+                cursor.execute(
+                    """SELECT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at
+                       FROM engagements e
+                       JOIN memberships m ON m.organization_id = e.organization_id
+                       WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                       ORDER BY e.created_at""",
+                    (actor_id,),
+                )
+            return [
+                {
+                    "id": row[0],
+                    "organization_id": row[1],
+                    "name": row[2],
+                    "objective": row[3],
+                    "status": row[4],
+                    "created_at": row[5],
+                }
+                for row in cursor.fetchall()
+            ]
+
     def revoke_membership(self, organization_id: UUID, actor_id: str, role: str, actor: str) -> None:
         with self.transaction() as connection:
             cursor = connection.cursor()
