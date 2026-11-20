@@ -15,7 +15,7 @@
         <p class="warning" role="status">Synthetic harness only. Microsoft Entra authentication and production services are not configured.</p>
       </header>
       <section class="toolbar" aria-label="Synthetic identity">
-        <label>Role
+        <label for="role">Role
           <select id="role">
             <option value="admin">Internal admin</option>
             <option value="reviewer">Internal reviewer</option>
@@ -23,17 +23,39 @@
             <option value="client">Client</option>
           </select>
         </label>
-        <label>Actor ID <input id="actor" value="admin-1" /></label>
+        <label for="actor">Actor ID <input id="actor" value="admin-1" /></label>
         <button id="refresh">Refresh workspace</button>
       </section>
       <section class="grid" aria-label="Studio portals">
-        <article><h2>Mission Control</h2><p>Create organizations, projects, assignments, AI runs and reviews.</p></article>
-        <article><h2>Client portal</h2><p>View approved deliverables and record acceptance.</p></article>
-        <article><h2>Professional portal</h2><p>See only accepted assignments and submit versioned work.</p></article>
+        <article><h2>Mission Control</h2><p>Internal staff create organizations and engagements.</p><span class="tag">Admin</span></article>
+        <article><h2>Client portal</h2><p>Clients see project progress and approved deliverable versions.</p><span class="tag">Client</span></article>
+        <article><h2>Professional portal</h2><p>Accepted assignments expose only scoped project work.</p><span class="tag">Professional</span></article>
       </section>
-      <section class="card">
-        <h2>Workspace status</h2>
-        <pre id="output" aria-live="polite">Choose a synthetic identity and refresh.</pre>
+      <section class="card admin-only" aria-labelledby="admin-title">
+        <h2 id="admin-title">Mission Control</h2>
+        <div class="form-grid">
+          <label for="organization-name">New organization <input id="organization-name" placeholder="Synthetic client organization" /></label>
+          <button id="create-organization">Create organization</button>
+        </div>
+        <div class="form-grid">
+          <label for="engagement-organization">Organization ID <input id="engagement-organization" placeholder="UUID from the organization result" /></label>
+          <label for="engagement-name">Engagement name <input id="engagement-name" placeholder="Operational discovery" /></label>
+          <label for="engagement-objective">Objective <input id="engagement-objective" placeholder="Reduce manual reconciliation effort" /></label>
+          <button id="create-engagement">Create engagement</button>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="workspace-title">
+        <h2 id="workspace-title">Workspace</h2>
+        <div class="form-grid">
+          <label for="engagement-id">Engagement ID <input id="engagement-id" placeholder="UUID" /></label>
+          <button id="load-projects">Load authorized projects</button>
+        </div>
+        <div class="form-grid">
+          <label for="package-id">Work package ID <input id="package-id" placeholder="UUID" /></label>
+          <button id="load-deliverables">Load visible deliverables</button>
+        </div>
+        <div id="identity-status" class="status" role="status">Choose a synthetic identity and refresh.</div>
+        <div id="workspace-results" class="results" aria-live="polite"></div>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

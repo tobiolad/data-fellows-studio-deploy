@@ -12,4 +12,13 @@ input, select, button { font: inherit; padding: 9px 11px; border: 1px solid #b8c
 button { background: #1f3a8a; color: white; border-color: #1f3a8a; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 20px; }
 article p { color: #5e6b7a; }
-pre { white-space: pre-wrap; min-height: 80px; background: #101826; color: #d9e6ff; padding: 16px; border-radius: 10px; overflow: auto; }
+.tag { color: #5468ff; font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; align-items: end; margin: 14px 0; }
+.status { background: #eef2f7; border-radius: 8px; margin-top: 18px; padding: 12px; }
+.status.success { background: #e6f6ed; color: #175d37; }
+.status.error { background: #ffeded; color: #8f2020; }
+.results { margin-top: 18px; }
+.result-section { border-top: 1px solid #dfe4ea; padding-top: 12px; }
+.record-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.record-list li { display: grid; gap: 3px; background: #f7f9fb; border-radius: 8px; padding: 10px; }
+.record-list span, .muted { color: #5e6b7a; font-size: .92rem; }
