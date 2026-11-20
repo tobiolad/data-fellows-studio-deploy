@@ -90,6 +90,17 @@ class StudioLifecycleTests(unittest.TestCase):
         actions = {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()}
         self.assertIn("membership.revoked", actions)
 
+    def test_reviewer_audit_history_is_organization_scoped(self) -> None:
+        first = self.post("/api/organizations", {"name": "Visible org"}, self.admin)
+        second = self.post("/api/organizations", {"name": "Hidden org"}, self.admin)
+        self.post(f"/api/organizations/{first['id']}/members", {"actor_id": "reviewer-1", "role": "reviewer"}, self.admin)
+        self.post("/api/engagements", {"organization_id": first["id"], "name": "Visible engagement", "objective": "Visible audit"}, self.admin)
+        self.post("/api/engagements", {"organization_id": second["id"], "name": "Hidden engagement", "objective": "Hidden audit"}, self.admin)
+        reviewer_events = self.client.get("/api/audit", headers=self.reviewer)
+        self.assertEqual(reviewer_events.status_code, 200)
+        self.assertTrue(reviewer_events.json())
+        self.assertTrue(all(event["organization_id"] == first["id"] for event in reviewer_events.json()))
+
     def test_real_authentication_is_required_when_test_mode_is_disabled(self) -> None:
         os.environ["STUDIO_TEST_MODE"] = "false"
         try:

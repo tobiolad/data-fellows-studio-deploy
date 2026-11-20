@@ -43,7 +43,7 @@ class Store:
     reviews: dict[str, dict] = field(default_factory=dict)
     audit: list[dict] = field(default_factory=list)
 
-    def event(self, actor: Identity, action: str, resource_type: str, resource_id: str, metadata: dict | None = None) -> None:
+    def event(self, actor: Identity, action: str, resource_type: str, resource_id: str, metadata: dict | None = None, organization_id: str | None = None) -> None:
         self.audit.append({
             "id": str(uuid4()),
             "actor_id": actor.actor_id,
@@ -51,6 +51,7 @@ class Store:
             "resource_type": resource_type,
             "resource_id": resource_id,
             "metadata": metadata or {},
+            "organization_id": organization_id,
             "created_at": now(),
         })
 
@@ -183,8 +184,8 @@ class ReviewCreate(BaseModel):
     comment: str = Field(default="", max_length=2000)
 
 
-def audit_response(actor: Identity, resource_type: str, resource_id: str, action: str) -> None:
-    store.event(actor, action, resource_type, resource_id)
+def audit_response(actor: Identity, resource_type: str, resource_id: str, action: str, organization_id: str | None = None) -> None:
+    store.event(actor, action, resource_type, resource_id, organization_id=organization_id)
 
 
 @app.get("/health")
@@ -205,7 +206,7 @@ def create_organization(body: OrganizationCreate, request: Request) -> dict:
     organization_id = str(uuid4())
     store.organizations[organization_id] = {"id": organization_id, "name": body.name, "created_at": now()}
     store.memberships[(actor.actor_id, organization_id)] = {"owner"}
-    audit_response(actor, "organization", organization_id, "organization.created")
+    audit_response(actor, "organization", organization_id, "organization.created", organization_id)
     return store.organizations[organization_id]
 
 
@@ -216,7 +217,7 @@ def grant_member(organization_id: str, body: MemberGrant, request: Request) -> d
         raise HTTPException(status_code=404, detail="Organization not found")
     member(actor, organization_id, "owner")
     store.memberships.setdefault((body.actor_id, organization_id), set()).add(body.role)
-    audit_response(actor, "organization_membership", f"{body.actor_id}:{organization_id}", "membership.granted")
+    audit_response(actor, "organization_membership", f"{body.actor_id}:{organization_id}", "membership.granted", organization_id)
     return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
 
 
@@ -234,7 +235,7 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
     assigned.remove(role)
     if not assigned:
         store.memberships.pop((member_id, organization_id), None)
-    audit_response(actor, "organization_membership", f"{member_id}:{organization_id}", "membership.revoked")
+    audit_response(actor, "organization_membership", f"{member_id}:{organization_id}", "membership.revoked", organization_id)
     return {"actor_id": member_id, "organization_id": organization_id, "role": role, "status": "revoked"}
 
 
@@ -262,7 +263,7 @@ def create_engagement(body: EngagementCreate, request: Request) -> dict:
         "status": "authorized",
         "created_at": now(),
     }
-    audit_response(actor, "engagement", engagement_id, "engagement.created")
+    audit_response(actor, "engagement", engagement_id, "engagement.created", body.organization_id)
     return store.engagements[engagement_id]
 
 
@@ -291,7 +292,7 @@ def create_project(body: ProjectCreate, request: Request) -> dict:
         "status": "active",
         "created_at": now(),
     }
-    audit_response(actor, "project", project_id, "project.created")
+    audit_response(actor, "project", project_id, "project.created", org_id)
     return store.projects[project_id]
 
 
@@ -311,7 +312,7 @@ def create_work_package(body: WorkPackageCreate, request: Request) -> dict:
         "acceptance_criteria": body.acceptance_criteria,
         "status": "unassigned",
     }
-    audit_response(actor, "work_package", package_id, "work_package.created")
+    audit_response(actor, "work_package", package_id, "work_package.created", org_id)
     return store.work_packages[package_id]
 
 
@@ -328,7 +329,7 @@ def assign_work(package_id: str, body: AssignmentCreate, request: Request) -> di
     assignment_id = str(uuid4())
     store.assignments[assignment_id] = {"id": assignment_id, "work_package_id": package_id, "professional_id": body.professional_id, "status": "accepted"}
     store.work_packages[package_id]["status"] = "assigned"
-    audit_response(actor, "assignment", assignment_id, "assignment.accepted")
+    audit_response(actor, "assignment", assignment_id, "assignment.accepted", org_id)
     return store.assignments[assignment_id]
 
 
@@ -364,7 +365,7 @@ def create_ai_run(body: AIRunCreate, request: Request) -> dict:
         "created_at": now(),
     }
     store.artifacts[artifact_id] = {"id": artifact_id, "run_id": run_id, "status": "pending_review", "content": output}
-    audit_response(actor, "ai_run", run_id, "ai_run.completed")
+    audit_response(actor, "ai_run", run_id, "ai_run.completed", org_id)
     return {**store.ai_runs[run_id], "artifact": store.artifacts[artifact_id]}
 
 
@@ -383,7 +384,7 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     artifact["status"] = body.decision
     artifact["decision_by"] = actor.actor_id
     artifact["decision_comment"] = body.comment
-    audit_response(actor, "ai_artifact", artifact["id"], f"ai_artifact.{body.decision}")
+    audit_response(actor, "ai_artifact", artifact["id"], f"ai_artifact.{body.decision}", organization_for_engagement(project["engagement_id"]))
     return artifact
 
 
@@ -408,7 +409,7 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
         "status": "under_review",
     }
     store.deliverables[deliverable_id] = record
-    audit_response(actor, "deliverable", deliverable_id, "deliverable.submitted")
+    audit_response(actor, "deliverable", deliverable_id, "deliverable.submitted", org_id)
     return record
 
 
@@ -426,7 +427,7 @@ def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request
     deliverable["status"] = body.decision
     review_id = str(uuid4())
     store.reviews[review_id] = {"id": review_id, "deliverable_id": deliverable_id, "reviewer": actor.actor_id, **body.model_dump(), "created_at": now()}
-    audit_response(actor, "deliverable", deliverable_id, f"deliverable.{body.decision}")
+    audit_response(actor, "deliverable", deliverable_id, f"deliverable.{body.decision}", organization_for_engagement(project["engagement_id"]))
     return {"deliverable": deliverable, "review": store.reviews[review_id]}
 
 
@@ -444,7 +445,7 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
     deliverable["status"] = "accepted"
     deliverable["accepted_by"] = actor.actor_id
     deliverable["accepted_at"] = now()
-    audit_response(actor, "deliverable", deliverable_id, "deliverable.client_accepted")
+    audit_response(actor, "deliverable", deliverable_id, "deliverable.client_accepted", org_id)
     return deliverable
 
 
@@ -459,7 +460,7 @@ def complete_project(project_id: str, request: Request) -> dict:
     if not any(d["status"] == "accepted" and store.work_packages[d["work_package_id"]]["project_id"] == project_id for d in store.deliverables.values()):
         raise HTTPException(status_code=409, detail="At least one client-accepted deliverable is required")
     project["status"] = "completed"
-    audit_response(actor, "project", project_id, "project.completed")
+    audit_response(actor, "project", project_id, "project.completed", org_id)
     return project
 
 
@@ -467,4 +468,11 @@ def complete_project(project_id: str, request: Request) -> dict:
 def audit(request: Request) -> list[dict]:
     actor = identity(request)
     require_global(actor, "admin", "reviewer")
-    return list(store.audit)
+    if "admin" in actor.roles:
+        return list(store.audit)
+    visible_organizations = {
+        organization_id
+        for (member_id, organization_id), roles in store.memberships.items()
+        if member_id == actor.actor_id and roles
+    }
+    return [event for event in store.audit if event["organization_id"] in visible_organizations]
