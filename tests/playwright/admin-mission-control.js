@@ -4,7 +4,7 @@ const fs = require("fs");
 const { chromium } = require("playwright");
 
 const API = process.env.STUDIO_API_URL || "http://127.0.0.1:8100";
-const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html";
+const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html?harness=synthetic";
 const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM || "/usr/bin/chromium";
 const ARTIFACTS = process.env.STUDIO_ARTIFACT_DIR || "artifacts";
 

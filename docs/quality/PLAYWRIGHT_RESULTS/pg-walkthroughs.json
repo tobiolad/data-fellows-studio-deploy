@@ -1,0 +1,34 @@
+{
+  "engagement-workspace": "Passed harness isolation, engagement creation, search and details",
+  "synthetic-lifecycle": {
+    "status": "passed",
+    "unauthorizedClientReview": 403,
+    "project": "completed",
+    "pageErrors": [],
+    "failedRequests": []
+  },
+  "client-portal": {
+    "status": "passed",
+    "clientProject": "3858263f-14f5-462b-a65c-415efd9a4e02",
+    "clientAcceptance": "accepted",
+    "project": "completed",
+    "pageErrors": [],
+    "failedRequests": []
+  },
+  "admin-mission-control": {
+    "status": "passed",
+    "unauthorizedAdminOverview": 403,
+    "pageErrors": [],
+    "failedRequests": []
+  },
+  "profile-admission-review": {
+    "status": "passed",
+    "actor": "profile-admission-1795268690223",
+    "profile": "saved_and_reloaded",
+    "review": "approved",
+    "unauthorized_profile_status": 403,
+    "errors": [],
+    "failures": []
+  },
+  "ui-contract": "Studio UI contract passed"
+}

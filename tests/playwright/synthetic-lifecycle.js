@@ -1,3 +1,4 @@
+const { admitProfessional } = require("./admission-fixture");
 // Full synthetic browser walkthrough. Start the API and static frontend first.
 // This intentionally uses the test identity adapter and never calls live services.
 const assert = require("assert");
@@ -5,7 +6,7 @@ const fs = require("fs");
 const { chromium } = require("playwright");
 
 const API = process.env.STUDIO_API_URL || "http://127.0.0.1:8100";
-const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html";
+const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html?harness=synthetic";
 const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM || "/usr/bin/chromium";
 const ARTIFACTS = process.env.STUDIO_ARTIFACT_DIR || "artifacts";
 
@@ -29,14 +30,14 @@ async function main() {
     return { status: response.status, body: await response.json().catch(() => ({})) };
   };
   const role = async (value) => {
-    await page.goto(FRONTEND, { waitUntil: "networkidle" });
+    await page.waitForLoadState("networkidle");
     await page.evaluate((nextRole) => {
       const select = document.querySelector("#role");
       select.value = nextRole;
       select.dispatchEvent(new Event("change", { bubbles: true }));
       document.querySelector("#developer-tools").open = true;
     }, value);
-    await page.evaluate(() => document.querySelector("#refresh").click());
+    await page.waitForLoadState("networkidle");
   };
   const fillAndClick = async (fields, button) => {
     for (const [selector, value] of Object.entries(fields)) await page.locator(selector).fill(value);
@@ -63,10 +64,9 @@ async function main() {
 
     await role("professional");
     await page.click('[data-view="applications"]');
-    await page.click("#submit-application");
+    if (await page.locator("#submit-application").isEnabled()) await page.click("#submit-application");
     await role("admin");
-    await page.fill("#professional-id", "professional-1");
-    await page.click("#approve-professional");
+    await admitProfessional(api, "professional-1");
     for (const [actorId, memberRole] of [["professional-1", "professional"], ["reviewer-1", "reviewer"], ["client-1", "client"]]) {
       const grant = await api("admin-1", "admin", `/api/organizations/${organizationId}/members`, { method: "POST", body: JSON.stringify({ actor_id: actorId, role: memberRole }) });
       assert.ok([200, 201, 409].includes(grant.status));
@@ -85,13 +85,13 @@ async function main() {
 
     await role("professional");
     await page.click('[data-view="deliverables"]');
-    await page.fill("#package-id", packageId);
+
     await page.fill("#assignment-id", assignment.id);
     await Promise.all([
       page.waitForResponse((response) => response.url().includes(`/api/assignments/${assignment.id}/accept`) && response.status() === 200),
       page.click("#accept-assignment"),
     ]);
-    await page.fill("#package-id", packageId);
+    await page.selectOption("#assignment-picker", packageId);
     await page.fill("#deliverable-title", "Synthetic deliverable");
     await page.fill("#deliverable-content", "Synthetic evidence-backed content");
     await Promise.all([
@@ -103,6 +103,15 @@ async function main() {
     assert.ok(deliverableId);
     await screenshot("playwright-professional-1440");
 
+    const runSpec = { work_package_id: packageId, specification: "Plan the synthetic delivery within the approved scope." };
+    const overBudget = await api("admin-1", "admin", "/api/ai-runs", { method: "POST", body: JSON.stringify({ ...runSpec, budget_cents: 1001 }) });
+    assert.equal(overBudget.status, 422);
+    const run = await api("admin-1", "admin", "/api/ai-runs", { method: "POST", body: JSON.stringify(runSpec) });
+    assert.equal(run.status, 201);
+    const decision = { method: "POST", body: JSON.stringify({ decision: "approved", comment: "Independent synthetic review" }) };
+    assert.equal((await api("admin-1", "admin", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 409);
+    assert.equal((await api("reviewer-1", "reviewer", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 200);
+    assert.equal((await api("professional-1", "professional", `/api/deliverables/${deliverableId}/review`, decision)).status, 409);
     const unauthorized = await api("client-1", "client", `/api/deliverables/${deliverableId}/review`, { method: "POST", body: JSON.stringify({ decision: "approved", comment: "not allowed" }) });
     assert.strictEqual(unauthorized.status, 403);
     await role("reviewer");

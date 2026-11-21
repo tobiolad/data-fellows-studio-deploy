@@ -55,8 +55,8 @@ interaction vocabulary.
 
 ## Components
 
-- **Navigation:** persistent desktop sidebar; horizontally scrollable, clearly selected mobile
-  navigation; active state is blue with a visible focus ring.
+- **Navigation:** persistent desktop sidebar and a keyboard-operable mobile Menu disclosure. Active
+  links expose the current page. See [shared workspace rules](docs/quality/STUDIO_DESIGN_SYSTEM.md).
 - **Panels and cards:** one surface per information group, 12px radius, quiet border, no nested
   decorative cards. Cards expose a concise summary and progressive detail action.
 - **Buttons:** royal blue for the one primary action, outlined secondary actions, and disabled

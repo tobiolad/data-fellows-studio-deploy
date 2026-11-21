@@ -1,10 +1,11 @@
+const { admitProfessional } = require("./admission-fixture");
 // Client-safe portal walkthrough against synthetic PostgreSQL records.
 const assert = require("assert");
 const fs = require("fs");
 const { chromium } = require("playwright");
 
 const API = process.env.STUDIO_API_URL || "http://127.0.0.1:8100";
-const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html";
+const FRONTEND = process.env.STUDIO_BROWSER_URL || "http://127.0.0.1:5173/index.html?harness=synthetic";
 const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM || "/usr/bin/chromium";
 const ARTIFACTS = process.env.STUDIO_ARTIFACT_DIR || "artifacts";
 
@@ -25,7 +26,7 @@ async function main() {
   const reviewerId = `reviewer-portal-${suffix}`;
   const organization = await post("admin-1", "admin", "/api/organizations", { name: `Client Portal ${suffix}` });
   for (const [actor, role] of [[clientId, "client"], [professionalId, "professional"], [reviewerId, "reviewer"]]) await post("admin-1", "admin", `/api/organizations/${organization.id}/members`, { actor_id: actor, role });
-  await post("admin-1", "admin", `/api/professionals/${professionalId}/approve`, {});
+  await admitProfessional(api, professionalId);
   const engagement = await post("admin-1", "admin", "/api/engagements", { organization_id: organization.id, name: "Authorized client engagement", objective: "Validate a client-safe delivery workspace" });
   const project = await post("admin-1", "admin", "/api/projects", { engagement_id: engagement.id, name: "Client delivery project" });
   const pack = await post("admin-1", "admin", "/api/work-packages", { project_id: project.id, title: "Verified handoff", acceptance_criteria: ["Evidence is reviewed", "Client decision is recorded"] });
