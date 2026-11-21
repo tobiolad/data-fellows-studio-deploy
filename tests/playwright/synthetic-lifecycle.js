@@ -30,7 +30,12 @@ async function main() {
   };
   const role = async (value) => {
     await page.goto(FRONTEND, { waitUntil: "networkidle" });
-    await page.selectOption("#role", value);
+    await page.evaluate((nextRole) => {
+      const select = document.querySelector("#role");
+      select.value = nextRole;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      document.querySelector("#developer-tools").open = true;
+    }, value);
     await page.click("#refresh");
   };
   const fillAndClick = async (fields, button) => {
@@ -41,6 +46,9 @@ async function main() {
   const screenshot = (name) => page.screenshot({ path: `${ARTIFACTS}/${name}.png`, fullPage: true });
 
   try {
+    await page.goto(FRONTEND, { waitUntil: "networkidle" });
+    await page.locator("#developer-tools summary").click();
+    await page.click("#refresh");
     await role("admin");
     await fillAndClick({ "#organization-name": "Playwright Synthetic Organization" }, "#create-organization");
     const organizationId = await page.locator("#engagement-organization").inputValue();
@@ -54,6 +62,7 @@ async function main() {
     await screenshot("playwright-admin-1440");
 
     await role("professional");
+    await page.click('[data-view="applications"]');
     await page.click("#submit-application");
     await role("admin");
     await page.fill("#professional-id", "professional-1");
@@ -64,15 +73,26 @@ async function main() {
     }
     await fillAndClick({ "#invite-package": packageId, "#invite-professional": "professional-1" }, "#invite-professional-button");
     const assignmentResponse = await api("professional-1", "professional", "/api/professionals/professional-1/assignments");
-    const assignment = assignmentResponse.body.at(-1);
+    const assignment = assignmentResponse.body.find((item) => item.work_package_id === packageId);
     assert.ok(assignment?.id);
     await screenshot("playwright-vetting-and-assignment-1440");
 
     await role("professional");
+    await page.click('[data-view="deliverables"]');
     await page.fill("#package-id", packageId);
     await page.fill("#assignment-id", assignment.id);
-    await page.click("#accept-assignment");
-    await fillAndClick({ "#package-id": packageId, "#deliverable-title": "Synthetic deliverable", "#deliverable-content": "Synthetic evidence-backed content" }, "#submit-deliverable");
+    await Promise.all([
+      page.waitForResponse((response) => response.url().includes(`/api/assignments/${assignment.id}/accept`) && response.status() === 200),
+      page.click("#accept-assignment"),
+    ]);
+    await page.fill("#package-id", packageId);
+    await page.fill("#deliverable-title", "Synthetic deliverable");
+    await page.fill("#deliverable-content", "Synthetic evidence-backed content");
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/deliverables") && response.status() === 201),
+      page.click("#submit-deliverable"),
+    ]);
+    await page.waitForFunction(() => Boolean(document.querySelector("#deliverable-id")?.value), null, { timeout: 10000 });
     const deliverableId = await page.locator("#deliverable-id").inputValue();
     assert.ok(deliverableId);
     await screenshot("playwright-professional-1440");
@@ -80,10 +100,12 @@ async function main() {
     const unauthorized = await api("client-1", "client", `/api/deliverables/${deliverableId}/review`, { method: "POST", body: JSON.stringify({ decision: "approved", comment: "not allowed" }) });
     assert.strictEqual(unauthorized.status, 403);
     await role("reviewer");
+    await page.click('[data-view="reviews"]');
     await fillAndClick({ "#review-deliverable-id": deliverableId, "#review-comment": "Independent synthetic review" }, "#review-deliverable");
     await screenshot("playwright-reviewer-1440");
 
     await role("client");
+    await page.click('[data-view="deliverables"]');
     await page.fill("#package-id", packageId);
     await page.click("#load-deliverables");
     await page.fill("#deliverable-id", deliverableId);

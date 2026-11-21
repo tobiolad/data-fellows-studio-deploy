@@ -139,6 +139,37 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.json()[0]["status"], "approved")
 
+    def test_opportunity_board_requires_approval_and_preserves_interest_review(self) -> None:
+        blocked = self.client.get("/api/opportunities", headers=self.professional)
+        self.assertEqual(blocked.status_code, 403)
+        published = self.post(
+            "/api/opportunities",
+            {
+                "title": "Synthetic reporting opportunity",
+                "summary": "Build a bounded reporting workflow.",
+                "specialization": "Data & automation",
+                "skills": ["Python", "Quality review"],
+                "compensation": None,
+                "deadline": None,
+            },
+            self.admin,
+        )
+        self.post("/api/professionals/professional-1/application", {}, self.professional)
+        self.post("/api/professionals/professional-1/decision", {"decision": "approved"}, self.admin)
+        visible = self.client.get("/api/opportunities", headers=self.professional)
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual(visible.json()[0]["id"], published["id"])
+        interest = self.post(
+            f"/api/opportunities/{published['id']}/interests",
+            {"approach": "Synthetic delivery experience and independent QA."},
+            self.professional,
+        )
+        self.assertEqual(interest["status"], "interested")
+        self.assertEqual(self.client.get("/api/opportunities/interests", headers=self.professional).status_code, 403)
+        reviewed = self.post(f"/api/opportunity-interests/{interest['id']}/selected", {}, self.admin)
+        self.assertEqual(reviewed["status"], "selected")
+        self.assertEqual(self.client.get("/api/opportunities", headers=self.client_user).status_code, 403)
+
     def test_revision_requested_creates_immutable_successor(self) -> None:
         organization = self.post("/api/organizations", {"name": "Revision test org"}, self.admin)
         org_id = organization["id"]

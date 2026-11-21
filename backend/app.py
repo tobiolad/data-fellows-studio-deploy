@@ -46,6 +46,8 @@ class Store:
     artifacts: dict[str, dict] = field(default_factory=dict)
     deliverables: dict[str, dict] = field(default_factory=dict)
     reviews: dict[str, dict] = field(default_factory=dict)
+    opportunities: dict[str, dict] = field(default_factory=dict)
+    opportunity_interests: dict[str, dict] = field(default_factory=dict)
     audit: list[dict] = field(default_factory=list)
 
     def event(self, actor: Identity, action: str, resource_type: str, resource_id: str, metadata: dict | None = None, organization_id: str | None = None) -> None:
@@ -73,6 +75,8 @@ class Store:
         self.artifacts.clear()
         self.deliverables.clear()
         self.reviews.clear()
+        self.opportunities.clear()
+        self.opportunity_interests.clear()
         self.audit.clear()
 
 
@@ -244,6 +248,19 @@ class ReviewCreate(BaseModel):
     comment: str = Field(default="", max_length=2000)
 
 
+class OpportunityCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=160)
+    summary: str = Field(min_length=2, max_length=4000)
+    specialization: str = Field(min_length=2, max_length=120)
+    skills: list[str] = Field(default_factory=list, max_length=20)
+    compensation: str | None = Field(default=None, max_length=240)
+    deadline: datetime | None = None
+
+
+class OpportunityInterestCreate(BaseModel):
+    approach: str = Field(min_length=2, max_length=4000)
+
+
 def audit_response(actor: Identity, resource_type: str, resource_id: str, action: str, organization_id: str | None = None) -> None:
     store.event(actor, action, resource_type, resource_id, organization_id=organization_id)
 
@@ -386,6 +403,20 @@ def submit_professional_application(professional_id: str, request: Request) -> d
     }
     store.event(actor, "professional.application_submitted", "professional", professional_id)
     return {"professional_id": professional_id, "status": "pending"}
+
+
+@app.get("/api/professionals/{professional_id}/application")
+def get_professional_application(professional_id: str, request: Request) -> dict:
+    actor = identity(request)
+    if actor.actor_id != professional_id and "admin" not in actor.roles:
+        raise HTTPException(status_code=403, detail="Application access is not authorized")
+    if postgres_mode():
+        record = postgres_repository().get_professional_application(professional_id)
+    else:
+        record = store.professional_admissions.get(professional_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Professional application not found")
+    return record
 
 
 @app.get("/api/professionals/admissions")
@@ -686,7 +717,99 @@ def list_assignments(professional_id: str, request: Request) -> list[dict]:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
     if actor.actor_id != professional_id and "admin" not in actor.roles:
         raise HTTPException(status_code=403, detail="Assignment access is not authorized")
-    return [item for item in store.assignments.values() if item["professional_id"] == professional_id]
+    result = []
+    for item in store.assignments.values():
+        if item["professional_id"] != professional_id:
+            continue
+        package = store.work_packages.get(item["work_package_id"], {})
+        project = store.projects.get(package.get("project_id"), {})
+        engagement = store.engagements.get(project.get("engagement_id"), {})
+        result.append({**item, "title": package.get("title"), "project_name": project.get("name"), "engagement_name": engagement.get("name"), "objective": engagement.get("objective")})
+    return result
+
+
+@app.post("/api/opportunities", status_code=status.HTTP_201_CREATED)
+def create_opportunity(body: OpportunityCreate, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        opportunity_id = postgres_repository().create_opportunity(body.title, body.summary, body.specialization, body.skills, body.compensation, body.deadline, actor.actor_id)
+        return {"id": str(opportunity_id), **body.model_dump(), "status": "published", "created_by": actor.actor_id}
+    opportunity_id = str(uuid4())
+    store.opportunities[opportunity_id] = {"id": opportunity_id, **body.model_dump(), "status": "published", "created_by": actor.actor_id, "created_at": now()}
+    audit_response(actor, "opportunity", opportunity_id, "opportunity.published")
+    return store.opportunities[opportunity_id]
+
+
+@app.get("/api/opportunities")
+def list_opportunities(request: Request) -> list[dict]:
+    actor = identity(request)
+    if "admin" not in actor.roles and "professional" not in actor.roles:
+        raise HTTPException(status_code=403, detail="Only approved professionals may view opportunities")
+    if postgres_mode():
+        try:
+            return postgres_repository().list_opportunities(actor.actor_id, admin="admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if "admin" not in actor.roles and actor.actor_id not in store.approved_professionals:
+        raise HTTPException(status_code=403, detail="Professional approval is required to view opportunities")
+    results = []
+    for opportunity in store.opportunities.values():
+        if opportunity["status"] != "published":
+            continue
+        interest = next((item for item in store.opportunity_interests.values() if item["opportunity_id"] == opportunity["id"] and item["professional_id"] == actor.actor_id), None)
+        results.append({**opportunity, "interest_id": interest and interest["id"], "interest_status": interest and interest["status"]})
+    return sorted(results, key=lambda item: item["created_at"], reverse=True)
+
+
+@app.post("/api/opportunities/{opportunity_id}/interests", status_code=status.HTTP_201_CREATED)
+def express_opportunity_interest(opportunity_id: str, body: OpportunityInterestCreate, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "professional")
+    if postgres_mode():
+        try:
+            interest_id = postgres_repository().express_interest(UUID(opportunity_id), actor.actor_id, body.approach)
+            return {"id": str(interest_id), "opportunity_id": opportunity_id, "professional_id": actor.actor_id, "approach": body.approach, "status": "interested"}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if actor.actor_id not in store.approved_professionals:
+        raise HTTPException(status_code=403, detail="Professional approval is required to express interest")
+    if opportunity_id not in store.opportunities or store.opportunities[opportunity_id]["status"] != "published":
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    interest_id = str(uuid4())
+    record = {"id": interest_id, "opportunity_id": opportunity_id, "professional_id": actor.actor_id, "approach": body.approach, "status": "interested", "created_at": now()}
+    store.opportunity_interests[interest_id] = record
+    return record
+
+
+@app.get("/api/opportunities/interests")
+def list_opportunity_interests(request: Request) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        return postgres_repository().list_opportunity_interests(actor.actor_id)
+    return list(store.opportunity_interests.values())
+
+
+@app.post("/api/opportunity-interests/{interest_id}/{decision}")
+def decide_opportunity_interest(interest_id: str, decision: Literal["selected", "withdrawn"], request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        try:
+            return postgres_repository().decide_opportunity_interest(UUID(interest_id), decision)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    record = store.opportunity_interests.get(interest_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Opportunity interest not found")
+    record["status"] = decision
+    audit_response(actor, "opportunity_interest", interest_id, f"opportunity_interest.{decision}")
+    return record
 
 
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)

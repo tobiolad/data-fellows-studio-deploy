@@ -2,329 +2,92 @@ const api = window.STUDIO_API_URL || "http://localhost:8100";
 const role = document.querySelector("#role");
 const actor = document.querySelector("#actor");
 const identityStatus = document.querySelector("#identity-status");
-const results = document.querySelector("#workspace-results");
+let assignments = [];
+let opportunities = [];
 
-function token() {
-  return `Bearer test:${actor.value.trim()}:${role.value}`;
-}
-
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+function token() { return `Bearer test:${actor.value.trim()}:${role.value}`; }
 async function request(path, options = {}) {
-  const response = await fetch(`${api}${path}`, {
-    ...options,
-    headers: { Authorization: token(), "Content-Type": "application/json", ...(options.headers || {}) },
-  });
+  const response = await fetch(`${api}${path}`, { ...options, headers: { Authorization: token(), "Content-Type": "application/json", ...(options.headers || {}) } });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
   return payload;
 }
+function showMessage(message, kind = "info") { identityStatus.textContent = message; identityStatus.dataset.kind = kind; }
+function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char])); }
+function dateLabel(value) { if (!value) return "No deadline recorded"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "Date unavailable" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
+function statusClass(status) { return String(status || "neutral").replaceAll("_", "-").replaceAll(" ", "-"); }
+function statusLabel(status) { return String(status || "Not started").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function emptyState(title, text) { return `<div class="empty-panel inline-empty"><span class="empty-icon">◇</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(text)}</p></div>`; }
 
-function showMessage(message, kind = "info") {
-  identityStatus.textContent = message;
-  identityStatus.className = `status ${kind}`;
+function navigate(viewName) {
+  const view = viewName || "overview";
+  $$(".view").forEach((item) => item.classList.toggle("active-view", item.id === `${view}-view`));
+  $$("[data-view]").forEach((link) => link.classList.toggle("active", link.dataset.view === view));
+  if (view === "opportunities") loadOpportunities();
+  if (view === "deliverables") loadSelectedDeliverables();
+  if (view === "reviews") renderReviews();
+  if (window.innerWidth <= 680) document.querySelector(".nav-list")?.classList.remove("nav-open");
 }
 
-function showRecords(title, records) {
-  const section = document.createElement("section");
-  section.className = "result-section";
-  const heading = document.createElement("h3");
-  heading.textContent = title;
-  section.append(heading);
-  if (!records.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "No records are visible for this identity.";
-    section.append(empty);
-  } else {
-    const list = document.createElement("ul");
-    list.className = "record-list";
-    records.forEach((record) => {
-      const item = document.createElement("li");
-      const name = document.createElement("strong");
-      name.textContent = record.name || record.title || record.actor_id || record.work_package_id || record.id || `Version ${record.version}`;
-      const details = document.createElement("span");
-      const membershipState = record.actor_id && (record.revoked_at ? "revoked" : "active");
-      details.textContent = [record.role, record.status, membershipState, record.id && `ID: ${record.id}`].filter(Boolean).join(" · ");
-      item.append(name, details);
-      list.append(item);
-    });
-    section.append(list);
-  }
-  results.replaceChildren(section);
+function renderMetrics() {
+  const active = assignments.filter((item) => item.status === "accepted").length;
+  const pending = assignments.filter((item) => item.status === "invited").length;
+  const review = assignments.filter((item) => item.status === "accepted").length ? "Available" : "—";
+  $("#metric-grid").innerHTML = `<article class="metric-card"><div class="metric-top"><span class="metric-label">Active assignments</span><span class="metric-icon">▣</span></div><div class="metric-value">${active}</div><div class="metric-note">Scoped work packages</div></article><article class="metric-card"><div class="metric-top"><span class="metric-label">Pending invitations</span><span class="metric-icon purple">✉</span></div><div class="metric-value">${pending}</div><div class="metric-note">Action needed</div></article><article class="metric-card"><div class="metric-top"><span class="metric-label">Awaiting review</span><span class="metric-icon orange">◷</span></div><div class="metric-value">${review}</div><div class="metric-note">No unsupported figures</div></article><article class="metric-card"><div class="metric-top"><span class="metric-label">Verified earnings</span><span class="metric-icon green">$</span></div><div class="metric-value">—</div><div class="metric-note">No payment records</div></article>`;
+  $("#invitation-count").textContent = pending; $("#invitation-count").hidden = pending === 0;
 }
-
-async function refresh() {
-  try {
-    const [me, health] = await Promise.all([request("/api/me"), fetch(`${api}/health`).then((r) => r.json())]);
-    showMessage(`${me.id} · ${me.roles.join(", ")} · API ${health.status}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
+function assignmentStatus(item) { return item.status === "accepted" ? "in-progress" : item.status === "invited" ? "invited" : "neutral"; }
+function assignmentCard(item, compact = false) {
+  const title = item.title || "Assigned work package";
+  return `<article class="panel ${compact ? "assignment-card compact" : "assignment-card"}" data-assignment-id="${escapeHtml(item.id)}"><div class="assignment-name"><span class="assignment-mark">▣</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(item.project_name || "Project reference unavailable")}</small></div></div><p>${escapeHtml(item.objective || "Scoped delivery work assigned by Data Fellows.")}</p><div class="assignment-meta"><div><span>Status</span><strong><span class="status-badge ${assignmentStatus(item)}">${escapeHtml(statusLabel(item.status))}</span></strong></div><div><span>Due date</span><strong>${escapeHtml(dateLabel(item.expires_at))}</strong></div><div><span>Access</span><strong>Assignment-scoped</strong></div></div><div class="card-footer"><small>Data Fellows delivery lead</small><button class="secondary-button open-assignment" data-package-id="${escapeHtml(item.work_package_id)}">Open workspace →</button></div></article>`;
 }
-
-async function createOrganization() {
-  const name = document.querySelector("#organization-name").value.trim();
-  if (!name) return showMessage("Enter an organization name first.", "error");
-  try {
-    const organization = await request("/api/organizations", { method: "POST", body: JSON.stringify({ name }) });
-    document.querySelector("#engagement-organization").value = organization.id;
-    showMessage(`Organization created: ${organization.id}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
+function renderAssignments() {
+  const rows = assignments.filter((item) => item.status !== "declined").slice(0, 5);
+  $("#assignment-table").innerHTML = rows.length ? `<table><thead><tr><th>Project</th><th>Delivery lead</th><th>Due date</th><th>Status</th><th>Access</th></tr></thead><tbody>${rows.map((item) => `<tr data-assignment-id="${escapeHtml(item.id)}"><td><div class="assignment-name"><span class="assignment-mark">▣</span><div><strong>${escapeHtml(item.title || "Work package")}</strong><small>${escapeHtml(item.project_name || "Project reference")}</small></div></div></td><td>Data Fellows<br /><small class="muted">Delivery lead</small></td><td>${escapeHtml(dateLabel(item.expires_at))}</td><td><span class="status-badge ${assignmentStatus(item)}">${escapeHtml(statusLabel(item.status))}</span></td><td><button class="text-button open-assignment" data-package-id="${escapeHtml(item.work_package_id)}">View task →</button></td></tr>`).join("")}</tbody></table>` : emptyState("No assignments yet", "Accepted invitations and scoped work will appear here.");
+  $("#assignments-list").innerHTML = rows.length ? rows.map((item) => assignmentCard(item)).join("") : emptyState("No assignments yet", "Your approved, scoped work packages will appear here.");
+  $("#package-id").value ||= rows.find((item) => item.status === "accepted")?.work_package_id || rows[0]?.work_package_id || "";
+  $$(".open-assignment").forEach((button) => button.addEventListener("click", () => { $("#package-id").value = button.dataset.packageId; navigate("deliverables"); loadSelectedDeliverables(); }));
 }
+function renderDeadlines() { const due = assignments.filter((item) => item.expires_at).slice(0, 3); $("#deadline-list").innerHTML = due.length ? due.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title || "Assignment")}</strong><span>Due ${escapeHtml(dateLabel(item.expires_at))}</span></div>`).join("") : `<p class="muted">No deadlines recorded for your active work.</p>`; }
+function renderFeedback() { $("#feedback-list").innerHTML = `<div class="feedback-item"><strong>No review feedback yet</strong><p>Independent review notes will appear here after a deliverable is reviewed.</p></div>`; }
+function renderInvitationHighlight() { const item = assignments.find((assignment) => assignment.status === "invited"); $("#invitation-highlight").innerHTML = item ? `<div class="invitation-kicker">NEW INVITATION</div><div class="invitation-title">${escapeHtml(item.title || "Scoped delivery invitation")}</div><p>${escapeHtml(item.objective || "Review the scope and acceptance criteria before responding.")}</p><div class="invitation-actions"><button class="primary-button accept-invitation" data-assignment-id="${escapeHtml(item.id)}">Accept invitation</button><button class="secondary-button decline-invitation" data-assignment-id="${escapeHtml(item.id)}">Decline</button></div>` : `<div class="invitation-kicker">INVITATIONS</div><div class="invitation-title">No invitations requiring attention</div><p>New scoped opportunities from Data Fellows will appear here.</p>`; $$(".accept-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "accept"))); $$(".decline-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "decline"))); }
+function renderInvitations() { const pending = assignments.filter((item) => item.status === "invited"); $("#invitations-list").innerHTML = pending.length ? pending.map((item) => `<article class="panel invitation-detail"><div class="eyebrow">INVITATION</div><h2>${escapeHtml(item.title || "Scoped delivery invitation")}</h2><p>${escapeHtml(item.objective || "Review the assigned scope and acceptance criteria before responding.")}</p><div class="assignment-meta"><div><span>Project</span><strong>${escapeHtml(item.project_name || "Project reference")}</strong></div><div><span>Supervisor</span><strong>Data Fellows delivery lead</strong></div><div><span>Deadline</span><strong>${escapeHtml(dateLabel(item.expires_at))}</strong></div></div><div class="card-footer"><small>Acceptance activates assignment-scoped access only.</small><div class="invitation-actions"><button class="primary-button accept-invitation" data-assignment-id="${escapeHtml(item.id)}">Accept invitation</button><button class="secondary-button decline-invitation" data-assignment-id="${escapeHtml(item.id)}">Decline</button></div></div></article>`).join("") : emptyState("No pending invitations", "New scoped invitations from Data Fellows will appear here."); $$("#invitations-list .accept-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "accept"))); $$("#invitations-list .decline-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "decline"))); }
 
-async function createEngagement() {
-  const body = {
-    organization_id: document.querySelector("#engagement-organization").value.trim(),
-    name: document.querySelector("#engagement-name").value.trim(),
-    objective: document.querySelector("#engagement-objective").value.trim(),
-  };
-  if (Object.values(body).some((value) => !value)) return showMessage("Complete all engagement fields first.", "error");
-  try {
-    const engagement = await request("/api/engagements", { method: "POST", body: JSON.stringify(body) });
-    document.querySelector("#engagement-id").value = engagement.id;
-    showMessage(`Engagement created: ${engagement.id}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
+async function loadAssignments() { try { assignments = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/assignments`); renderMetrics(); renderAssignments(); renderDeadlines(); renderInvitationHighlight(); renderInvitations(); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
+async function loadSelectedDeliverables() { const packageId = $("#package-id")?.value.trim(); if (!packageId) { $("#deliverables-list").innerHTML = emptyState("Choose an assignment", "Open an assignment to view its versioned deliverables."); return; } try { const deliverables = await request(`/api/work-packages/${encodeURIComponent(packageId)}/deliverables`); $("#deliverables-list").innerHTML = deliverables.length ? deliverables.map((item) => `<article class="panel deliverable-card"><div class="panel-heading"><div><h2>${escapeHtml(item.title)}</h2><p>Version ${item.version} · Submitted by ${escapeHtml(item.submitted_by || "authorized delivery resource")}</p></div><span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div><p class="muted">${escapeHtml(item.content)}</p><div class="card-footer"><small>Immutable version record</small>${item.status === "approved" || item.status === "accepted" ? `<button class="text-button choose-deliverable" data-deliverable-id="${escapeHtml(item.id)}">Use this version</button>` : ""}</div></article>`).join("") : emptyState("No deliverables yet", "Submit a version when your assigned work is ready for review."); $$(".choose-deliverable").forEach((button) => { button.addEventListener("click", () => { $("#deliverable-id").value = button.dataset.deliverableId; }); }); } catch (error) { $("#deliverables-list").innerHTML = emptyState("Deliverables unavailable", error.message); } }
+async function loadOpportunities() { try { opportunities = await request("/api/opportunities"); const filters = [...new Set(opportunities.map((item) => item.specialization).filter(Boolean))]; $("#opportunity-filter").innerHTML = `<option value="">All specializations</option>${filters.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`; renderOpportunities(); } catch (error) { $("#opportunity-list").innerHTML = emptyState("Opportunities unavailable", error.message); } }
+function renderOpportunities() { const filter = $("#opportunity-filter").value; const query = $("#opportunity-search").value.trim().toLowerCase(); const visible = opportunities.filter((item) => (!filter || item.specialization === filter) && (!query || `${item.title} ${item.summary} ${item.skills?.join(" ")}`.toLowerCase().includes(query))); $("#opportunity-list").innerHTML = visible.length ? visible.map((item) => `<article class="panel opportunity-card"><div class="eyebrow">${escapeHtml(item.specialization || "General")}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.summary)}</p><div class="chip-list">${(item.skills || []).map((skill) => `<span class="chip">${escapeHtml(skill)}</span>`).join("")}</div><div class="card-footer"><small>${item.compensation ? escapeHtml(item.compensation) : "Compensation terms shared after selection"}<br />${item.deadline ? `Response by ${escapeHtml(dateLabel(item.deadline))}` : "No response deadline recorded"}</small>${item.interest_status ? `<span class="status-badge success">${escapeHtml(statusLabel(item.interest_status))}</span>` : `<button class="primary-button interest-button" data-opportunity-id="${escapeHtml(item.id)}">Express interest</button>`}</div></article>`).join("") : emptyState("No opportunities match", "Data Fellows will publish sanitized opportunities when eligible work is available."); $$(".interest-button").forEach((button) => button.addEventListener("click", () => expressInterest(button.dataset.opportunityId))); }
+async function expressInterest(opportunityId) { const approach = window.prompt("Briefly describe the relevant experience you would bring to this opportunity:", "I can contribute scoped delivery experience and independent QA."); if (!approach) return; try { await request(`/api/opportunities/${encodeURIComponent(opportunityId)}/interests`, { method: "POST", body: JSON.stringify({ approach }) }); showMessage("Interest submitted for Data Fellows review.", "success"); await loadOpportunities(); } catch (error) { showMessage(error.message, "error"); } }
+async function decideAssignment(id, decision) { try { await request(`/api/assignments/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" }); showMessage(`Invitation ${decision === "accept" ? "accepted" : "declined"}.`, "success"); await loadAssignments(); } catch (error) { showMessage(error.message, "error"); } }
+async function submitDeliverable() { const packageId = $("#package-id").value.trim(); const title = $("#deliverable-title").value.trim(); const content = $("#deliverable-content").value.trim(); if (!packageId || !title || !content) return showMessage("Choose an assignment and complete the deliverable fields first.", "error"); try { const item = await request("/api/deliverables", { method: "POST", body: JSON.stringify({ work_package_id: packageId, title, content }) }); $("#deliverable-id").value = item.id; $("#deliverable-status").textContent = `Version ${item.version} submitted for independent review.`; showMessage("Deliverable submitted for review.", "success"); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
+async function acceptDeliverable() { const id = $("#deliverable-id").value.trim(); if (!id) return showMessage("Choose an approved deliverable version first.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" }); showMessage("Approved deliverable accepted.", "success"); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
+async function reviewDeliverable() { const id = $("#review-deliverable-id").value.trim(); const decision = $("#review-decision").value; const comment = $("#review-comment").value.trim(); if (!id || !comment) return showMessage("Complete the deliverable and review comment first.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify({ decision, comment }) }); showMessage(`Deliverable ${statusLabel(decision)}.`, "success"); } catch (error) { showMessage(error.message, "error"); } }
 
-async function createProject() {
-  const body = {
-    engagement_id: document.querySelector("#project-engagement").value.trim(),
-    name: document.querySelector("#project-name").value.trim(),
-  };
-  if (Object.values(body).some((value) => !value)) return showMessage("Complete the engagement and project name first.", "error");
-  try {
-    const project = await request("/api/projects", { method: "POST", body: JSON.stringify(body) });
-    document.querySelector("#project-id").value = project.id;
-    showMessage(`Project created: ${project.id}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
+async function submitApplication() { try { const result = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`, { method: "POST", body: "{}" }); showMessage("Professional application submitted for review.", "success"); updateApplication(result); } catch (error) { showMessage(error.message, "error"); } }
+function updateApplication(record) { if (!record) return; $("#application-status-text").textContent = `Your application is ${statusLabel(record.status).toLowerCase()}. Data Fellows will contact you about the next step.`; $("#application-status-badge").textContent = statusLabel(record.status); $("#application-status-badge").className = `status-badge ${record.status === "approved" ? "success" : record.status === "rejected" ? "warning" : "neutral"}`; }
+async function loadApplication() { try { updateApplication(await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`)); } catch (error) { if (!error.message.includes("404")) showMessage(error.message, "error"); } }
+function renderReviews() { $("#reviews-list").innerHTML = emptyState("No review feedback yet", "Independent review decisions and requested revisions will appear after a deliverable is submitted."); }
 
-async function createWorkPackage() {
-  const title = document.querySelector("#package-title").value.trim();
-  const projectId = document.querySelector("#project-id").value.trim();
-  const criteria = document.querySelector("#package-criteria").value.trim();
-  if (!projectId || !title || !criteria) return showMessage("Complete the project, title and acceptance criteria first.", "error");
-  try {
-    const workPackage = await request("/api/work-packages", {
-      method: "POST",
-      body: JSON.stringify({ project_id: projectId, title, acceptance_criteria: criteria.split(",").map((item) => item.trim()).filter(Boolean) }),
-    });
-    document.querySelector("#package-id").value = workPackage.id;
-    showMessage(`Work package created: ${workPackage.id}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
+// Existing admin lifecycle controls remain available in the developer harness.
+async function createOrganization() { const name = $("#organization-name").value.trim(); if (!name) return showMessage("Enter an organization name first.", "error"); try { const item = await request("/api/organizations", { method: "POST", body: JSON.stringify({ name }) }); $("#engagement-organization").value = item.id; showMessage(`Organization created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function createEngagement() { const body = { organization_id: $("#engagement-organization").value.trim(), name: $("#engagement-name").value.trim(), objective: $("#engagement-objective").value.trim() }; if (Object.values(body).some((value) => !value)) return showMessage("Complete all engagement fields first.", "error"); try { const item = await request("/api/engagements", { method: "POST", body: JSON.stringify(body) }); $("#project-engagement").value = item.id; $("#engagement-id").value = item.id; showMessage(`Engagement created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function createProject() { const body = { engagement_id: $("#project-engagement").value.trim(), name: $("#project-name").value.trim() }; if (Object.values(body).some((value) => !value)) return showMessage("Complete the engagement and project name first.", "error"); try { const item = await request("/api/projects", { method: "POST", body: JSON.stringify(body) }); $("#project-id").value = item.id; showMessage(`Project created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function createWorkPackage() { const body = { project_id: $("#project-id").value.trim(), title: $("#package-title").value.trim(), acceptance_criteria: $("#package-criteria").value.trim().split(",").map((item) => item.trim()).filter(Boolean) }; if (!body.project_id || !body.title || !body.acceptance_criteria.length) return showMessage("Complete the project, title and acceptance criteria first.", "error"); try { const item = await request("/api/work-packages", { method: "POST", body: JSON.stringify(body) }); $("#invite-package").value = item.id; $("#package-id").value = item.id; showMessage(`Work package created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function inviteProfessional() { try { const item = await request(`/api/work-packages/${encodeURIComponent($("#invite-package").value.trim())}/assignments`, { method: "POST", body: JSON.stringify({ professional_id: $("#invite-professional").value.trim() }) }); $("#assignment-id").value = item.id; showMessage(`Invitation created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function decideProfessional(decision) { try { const item = await request(`/api/professionals/${encodeURIComponent($("#professional-id").value.trim())}/decision`, { method: "POST", body: JSON.stringify({ decision }) }); showMessage(`Professional ${decision}.`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function loadAdmissions() { try { const items = await request("/api/professionals/admissions?status_filter=pending"); $("#workspace-results").textContent = items.length ? `${items.length} pending application(s)` : "No pending applications"; } catch (error) { showMessage(error.message, "error"); } }
+async function completeProject() { try { await request(`/api/projects/${encodeURIComponent($("#complete-project-id").value.trim())}/complete`, { method: "POST", body: "{}" }); showMessage("Project completed after client acceptance.", "success"); } catch (error) { showMessage(error.message, "error"); } }
+async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = me.roles.includes("professional") ? "Approved professional" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); await loadAssignments(); await loadApplication(); } catch (error) { showMessage(error.message, "error"); } }
+function syncRole() { actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`; $("#legacy-admin-controls").hidden = role.value !== "admin"; $("#review-action").hidden = role.value !== "reviewer"; $("#client-acceptance").hidden = role.value !== "client"; $("#developer-tools").open = role.value === "admin"; $("#user-role").textContent = role.value === "professional" ? "Approved professional" : statusLabel(role.value); if (role.value === "professional") { $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value; } }
 
-async function inviteProfessional() {
-  const packageId = document.querySelector("#invite-package").value.trim();
-  const professionalId = document.querySelector("#invite-professional").value.trim();
-  if (!packageId || !professionalId) return showMessage("Complete the work package and professional ID first.", "error");
-  try {
-    const assignment = await request(`/api/work-packages/${encodeURIComponent(packageId)}/assignments`, {
-      method: "POST",
-      body: JSON.stringify({ professional_id: professionalId }),
-    });
-    showMessage(`Invitation created: ${assignment.id}`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function loadMembers() {
-  const id = document.querySelector("#members-organization").value.trim();
-  if (!id) return showMessage("Enter an organization ID first.", "error");
-  try {
-    showRecords("Authorized membership roster", await request(`/api/organizations/${encodeURIComponent(id)}/members`));
-    showMessage("Membership roster loaded.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function revokeMembership() {
-  const organizationId = document.querySelector("#revoke-organization").value.trim();
-  const memberId = document.querySelector("#revoke-member").value.trim();
-  const role = document.querySelector("#revoke-role").value;
-  if (!organizationId || !memberId) return showMessage("Complete the organization and member IDs first.", "error");
-  try {
-    await request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/${encodeURIComponent(role)}`, { method: "DELETE" });
-    showMessage(`Membership revoked for ${memberId}.`, "success");
-    document.querySelector("#members-organization").value = organizationId;
-    await loadMembers();
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function loadProjects() {
-  const id = document.querySelector("#engagement-id").value.trim();
-  if (!id) return showMessage("Enter an engagement ID first.", "error");
-  try {
-    showRecords("Authorized projects", await request(`/api/engagements/${encodeURIComponent(id)}/projects`));
-    showMessage("Projects loaded.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function loadDeliverables() {
-  const id = document.querySelector("#package-id").value.trim();
-  if (!id) return showMessage("Enter a work package ID first.", "error");
-  try {
-    showRecords("Visible deliverables", await request(`/api/work-packages/${encodeURIComponent(id)}/deliverables`));
-    showMessage("Deliverables loaded.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function loadAssignments() {
-  try {
-    showRecords("My scoped assignments", await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/assignments`));
-    showMessage("Assignments loaded.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function submitApplication() {
-  try {
-    await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`, { method: "POST", body: "{}" });
-    showMessage("Professional application submitted for review.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function decideProfessional(decision) {
-  const id = document.querySelector("#professional-id").value.trim();
-  if (!id) return showMessage("Enter a professional ID first.", "error");
-  try {
-    await request(`/api/professionals/${encodeURIComponent(id)}/decision`, {
-      method: "POST",
-      body: JSON.stringify({ decision }),
-    });
-    showMessage(`Professional ${decision}.`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function loadAdmissions() {
-  try {
-    showRecords("Professional admission queue", await request("/api/professionals/admissions?status_filter=pending"));
-    showMessage("Pending professional applications loaded.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function decideAssignment(decision) {
-  const id = document.querySelector("#assignment-id").value.trim();
-  if (!id) return showMessage("Enter an assignment ID first.", "error");
-  try {
-    await request(`/api/assignments/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" });
-    showMessage(`Assignment ${decision === "accept" ? "accepted" : "declined"}.`, "success");
-    await loadAssignments();
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function submitDeliverable() {
-  const body = {
-    work_package_id: document.querySelector("#package-id").value.trim(),
-    title: document.querySelector("#deliverable-title").value.trim(),
-    content: document.querySelector("#deliverable-content").value.trim(),
-  };
-  if (Object.values(body).some((value) => !value)) return showMessage("Complete the work package, title and content first.", "error");
-  try {
-    const deliverable = await request("/api/deliverables", { method: "POST", body: JSON.stringify(body) });
-    document.querySelector("#deliverable-id").value = deliverable.id;
-    showMessage(`Deliverable version ${deliverable.version} submitted for review.`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function acceptDeliverable() {
-  const id = document.querySelector("#deliverable-id").value.trim();
-  if (!id) return showMessage("Enter a deliverable ID first.", "error");
-  try {
-    await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" });
-    showMessage("Approved deliverable accepted by the client.", "success");
-    await loadDeliverables();
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function reviewDeliverable() {
-  const id = document.querySelector("#review-deliverable-id").value.trim();
-  const decision = document.querySelector("#review-decision").value;
-  const comment = document.querySelector("#review-comment").value.trim();
-  if (!id || !comment) return showMessage("Complete the deliverable ID and review comment first.", "error");
-  try {
-    await request(`/api/deliverables/${encodeURIComponent(id)}/review`, {
-      method: "POST",
-      body: JSON.stringify({ decision, comment }),
-    });
-    showMessage(`Deliverable ${decision === "approved" ? "approved" : "returned for revision"}.`, "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-async function completeProject() {
-  const id = document.querySelector("#complete-project-id").value.trim();
-  if (!id) return showMessage("Enter a project ID first.", "error");
-  try {
-    await request(`/api/projects/${encodeURIComponent(id)}/complete`, { method: "POST", body: "{}" });
-    showMessage("Project completed after client acceptance.", "success");
-  } catch (error) {
-    showMessage(error.message, "error");
-  }
-}
-
-function syncRole() {
-  actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`;
-  document.querySelectorAll(".admin-only").forEach((element) => {
-    element.hidden = role.value !== "admin";
-  });
-  document.querySelectorAll(".professional-only").forEach((element) => {
-    element.hidden = role.value !== "professional";
-  });
-  document.querySelectorAll(".client-only").forEach((element) => {
-    element.hidden = role.value !== "client";
-  });
-}
-
-document.querySelector("#refresh").addEventListener("click", refresh);
-document.querySelector("#create-organization").addEventListener("click", createOrganization);
-document.querySelector("#create-engagement").addEventListener("click", createEngagement);
-document.querySelector("#create-project").addEventListener("click", createProject);
-document.querySelector("#create-package").addEventListener("click", createWorkPackage);
-document.querySelector("#invite-professional-button").addEventListener("click", inviteProfessional);
-document.querySelector("#load-members").addEventListener("click", loadMembers);
-document.querySelector("#revoke-membership").addEventListener("click", revokeMembership);
-document.querySelector("#load-projects").addEventListener("click", loadProjects);
-document.querySelector("#load-deliverables").addEventListener("click", loadDeliverables);
-document.querySelector("#load-assignments").addEventListener("click", loadAssignments);
-document.querySelector("#accept-assignment").addEventListener("click", () => decideAssignment("accept"));
-document.querySelector("#decline-assignment").addEventListener("click", () => decideAssignment("decline"));
-document.querySelector("#submit-application").addEventListener("click", submitApplication);
-document.querySelector("#approve-professional").addEventListener("click", () => decideProfessional("approved"));
-document.querySelector("#reject-professional").addEventListener("click", () => decideProfessional("rejected"));
-document.querySelector("#load-admissions").addEventListener("click", loadAdmissions);
-document.querySelector("#submit-deliverable").addEventListener("click", submitDeliverable);
-document.querySelector("#accept-deliverable").addEventListener("click", acceptDeliverable);
-document.querySelector("#review-deliverable").addEventListener("click", reviewDeliverable);
-document.querySelector("#complete-project").addEventListener("click", completeProject);
-role.addEventListener("change", syncRole);
-syncRole();
+document.querySelectorAll("[data-view]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); const view = link.dataset.view; history.replaceState(null, "", `#${view}`); navigate(view); }));
+document.querySelectorAll("[data-view-target]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.viewTarget)));
+window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "overview"));
+$("#mobile-menu").addEventListener("click", () => $(".nav-list").classList.toggle("nav-open"));
+$("#refresh").addEventListener("click", refresh); $("#load-assignments").addEventListener("click", loadAssignments); $("#role").addEventListener("change", syncRole);
+$("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable);
+$("#opportunity-filter").addEventListener("change", renderOpportunities); $("#opportunity-search").addEventListener("input", renderOpportunities);
+$("#create-organization").addEventListener("click", createOrganization); $("#create-engagement").addEventListener("click", createEngagement); $("#create-project").addEventListener("click", createProject); $("#create-package").addEventListener("click", createWorkPackage); $("#invite-professional-button").addEventListener("click", inviteProfessional); $("#accept-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "accept")); $("#decline-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "decline")); $("#load-admissions").addEventListener("click", loadAdmissions); $("#approve-professional").addEventListener("click", () => decideProfessional("approved")); $("#reject-professional").addEventListener("click", () => decideProfessional("rejected")); $("#complete-project").addEventListener("click", completeProject);
+syncRole(); navigate(location.hash.slice(1) || "overview"); refresh();

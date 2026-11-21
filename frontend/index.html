@@ -3,134 +3,68 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Data Fellows Studio — synthetic pilot</title>
+    <title>Data Fellows Studio — Professional workspace</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header>
-        <p class="eyebrow">DATA FELLOWS 2035</p>
-        <h1>Managed delivery studio</h1>
-        <p class="lede">A synthetic vertical slice for accountable client delivery, approved professionals and bounded AI execution.</p>
-        <p class="warning" role="status">Synthetic harness only. Microsoft Entra authentication and production services are not configured.</p>
-      </header>
-      <section class="toolbar" aria-label="Synthetic identity">
-        <label for="role">Role
-          <select id="role">
-            <option value="admin">Internal admin</option>
-            <option value="reviewer">Internal reviewer</option>
-            <option value="professional">Approved professional</option>
-            <option value="client">Client</option>
-          </select>
-        </label>
-        <label for="actor">Actor ID <input id="actor" value="admin-1" /></label>
-        <button id="refresh">Refresh workspace</button>
-      </section>
-      <section class="grid" aria-label="Studio portals">
-        <article><h2>Mission Control</h2><p>Internal staff create organizations and engagements.</p><span class="tag">Admin</span></article>
-        <article><h2>Client portal</h2><p>Clients see project progress and approved deliverable versions.</p><span class="tag">Client</span></article>
-        <article><h2>Professional portal</h2><p>Accepted assignments expose only scoped project work.</p><span class="tag">Professional</span></article>
-      </section>
-      <section class="card admin-only" aria-labelledby="admin-title">
-        <h2 id="admin-title">Mission Control</h2>
-        <div class="form-grid">
-          <label for="organization-name">New organization <input id="organization-name" placeholder="Synthetic client organization" /></label>
-          <button id="create-organization">Create organization</button>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Professional workspace navigation">
+        <div class="brand"><span class="brand-mark">D</span><span><strong>Data Fellows</strong><small>Studio</small></span></div>
+        <div class="portal-label">Professional portal</div>
+        <nav class="nav-list" id="primary-nav">
+          <a href="#overview" data-view="overview" class="active"><span class="nav-icon">⌂</span>Overview</a>
+          <a href="#opportunities" data-view="opportunities"><span class="nav-icon">◇</span>Available opportunities</a>
+          <a href="#applications" data-view="applications"><span class="nav-icon">▤</span>My applications</a>
+          <a href="#assignments" data-view="assignments"><span class="nav-icon">▣</span>My assignments</a>
+          <a href="#invitations" data-view="invitations"><span class="nav-icon">✉</span>Invitations <b id="invitation-count" class="nav-count" hidden>0</b></a>
+          <a href="#deliverables" data-view="deliverables"><span class="nav-icon">▧</span>Deliverables</a>
+          <a href="#reviews" data-view="reviews"><span class="nav-icon">◷</span>Reviews &amp; feedback</a>
+          <a href="#messages" data-view="messages"><span class="nav-icon">▱</span>Messages</a>
+          <a href="#earnings" data-view="earnings"><span class="nav-icon">$</span>Earnings &amp; payments</a>
+          <a href="#profile" data-view="profile"><span class="nav-icon">◯</span>Professional profile</a>
+          <a href="#help" data-view="help"><span class="nav-icon">?</span>Help &amp; support</a>
+        </nav>
+        <div class="sidebar-promise"><span class="sparkle">✦</span><strong>Deliver with AI,<br />backed by Data Fellows</strong><p>Work on scoped engagements, use approved tools and deliver high-impact results.</p></div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button>
+          <label class="search-box" for="workspace-search"><span aria-hidden="true">⌕</span><input id="workspace-search" placeholder="Search assignments, deliverables, or resources…" /></label>
+          <div class="topbar-actions"><button class="icon-button" aria-label="Notifications">♧<i></i></button><span class="topbar-divider"></span><div class="user-menu"><span class="avatar">AJ</span><span><strong id="user-name">Alex Johnson</strong><small id="user-role">Approved professional</small></span><span aria-hidden="true">⌄</span></div></div>
+        </header>
+
+        <div class="content-wrap">
+          <div class="synthetic-warning" role="status"><span>●</span> Synthetic test workspace. Microsoft Entra authentication and production services are not configured.</div>
+          <section id="overview-view" class="view active-view" aria-labelledby="overview-heading">
+            <div class="page-heading"><div><p class="eyebrow">DATA FELLOWS STUDIO</p><h1 id="overview-heading">Good morning, <span id="greeting-name">Alex</span> <span aria-hidden="true">👋</span></h1><p>Here’s what needs your attention today.</p></div><button class="secondary-button" data-view-target="profile">View profile <span>→</span></button></div>
+            <div class="metric-grid" id="metric-grid"></div>
+            <div class="dashboard-grid">
+              <div class="dashboard-main">
+                <section class="panel assignments-panel"><div class="panel-heading"><div><h2>My assignments</h2><p>Your active work with Data Fellows.</p></div><a href="#assignments" data-view="assignments" class="text-link">View all assignments <span>→</span></a></div><div id="assignment-table" class="assignment-table"></div></section>
+                <div class="lower-grid"><section id="invitation-highlight" class="panel invitation-card"></section><section class="panel earnings-card"><div class="panel-heading"><div><h2>Earnings</h2><p>Your approved work with Data Fellows.</p></div><span class="card-icon green">$</span></div><div class="earnings-value">Not available</div><p class="muted">No verified payment records are available in this workspace.</p><div class="earnings-note">Compensation is shown only from approved agreements.</div></section></div>
+              </div>
+              <aside class="dashboard-side"><section class="panel side-panel"><div class="panel-heading"><div><h2>Upcoming deadlines</h2><p>Key dates for active work.</p></div><span class="card-icon blue">◷</span></div><div id="deadline-list" class="timeline"></div></section><section class="panel side-panel"><div class="panel-heading"><div><h2>Recent feedback</h2><p>Latest review notes from Data Fellows.</p></div><span class="card-icon purple">▱</span></div><div id="feedback-list" class="feedback-list"></div></section></aside>
+            </div>
+          </section>
+
+          <section id="opportunities-view" class="view" aria-labelledby="opportunities-heading"><div class="page-heading"><div><p class="eyebrow">OPPORTUNITIES</p><h1 id="opportunities-heading">Find meaningful work</h1><p>Explore sanitized opportunities published by Data Fellows. Expressing interest does not grant project access.</p></div></div><div class="filter-row"><label>Specialization<select id="opportunity-filter"><option value="">All specializations</option></select></label><label>Search<input id="opportunity-search" placeholder="Search opportunities" /></label></div><div id="opportunity-list" class="opportunity-grid"></div></section>
+          <section id="applications-view" class="view" aria-labelledby="applications-heading"><div class="page-heading"><div><p class="eyebrow">APPLICATIONS</p><h1 id="applications-heading">My applications</h1><p>Track professional admission and opportunity expressions of interest.</p></div><button class="primary-button" id="submit-application">Submit professional application</button></div><div class="panel application-status"><div class="status-icon">✓</div><div><h2 id="application-status-title">Application status</h2><p id="application-status-text">Your profile status will appear here after you apply.</p></div><span id="application-status-badge" class="status-badge neutral">Not submitted</span></div><div id="application-list" class="stack-list"></div></section>
+          <section id="assignments-view" class="view" aria-labelledby="assignments-heading"><div class="page-heading"><div><p class="eyebrow">DELIVERY</p><h1 id="assignments-heading">My assignments</h1><p>Scoped work packages assigned by your Data Fellows delivery lead.</p></div><button id="load-assignments" class="secondary-button">Refresh assignments</button></div><div id="assignments-list" class="assignment-cards"></div></section>
+          <section id="invitations-view" class="view" aria-labelledby="invitations-heading"><div class="page-heading"><div><p class="eyebrow">ACTION NEEDED</p><h1 id="invitations-heading">Invitations</h1><p>Review the scope and terms before accepting an assignment.</p></div></div><div id="invitations-list" class="invitation-grid"></div></section>
+          <section id="deliverables-view" class="view" aria-labelledby="deliverables-heading"><div class="page-heading"><div><p class="eyebrow">WORK PRODUCTS</p><h1 id="deliverables-heading">Deliverables</h1><p>Submit versioned work products and track their review status.</p></div></div><div id="deliverables-list" class="deliverable-list"></div><section class="panel submission-panel"><div class="panel-heading"><div><h2>Submit a deliverable</h2><p>Select an accepted assignment to submit work.</p></div></div><div class="form-grid"><label for="package-id">Selected assignment<input id="package-id" placeholder="Choose an assignment above" /></label><label for="deliverable-title">Title<input id="deliverable-title" placeholder="Reviewed implementation plan" /></label><label for="deliverable-content" class="wide-field">Submission notes<textarea id="deliverable-content" rows="3" placeholder="Describe the work completed and supporting context"></textarea></label><button id="submit-deliverable" class="primary-button">Submit for review</button><button id="load-deliverables" class="secondary-button">Refresh visible versions</button></div><div id="deliverable-status" class="inline-status" role="status"></div></section><section id="client-acceptance" class="panel client-action" hidden><div class="panel-heading"><div><h2>Client acceptance</h2><p>Available only to an authorized client after independent review.</p></div></div><div class="form-grid"><label for="deliverable-id">Approved deliverable ID<input id="deliverable-id" placeholder="Select a visible version" /></label><button id="accept-deliverable" class="primary-button">Accept approved deliverable</button></div></section></section>
+          <section id="reviews-view" class="view" aria-labelledby="reviews-heading"><div class="page-heading"><div><p class="eyebrow">QUALITY</p><h1 id="reviews-heading">Reviews &amp; feedback</h1><p>See independent review decisions and requested revisions.</p></div></div><div id="reviews-list" class="stack-list"></div><section id="review-action" class="panel reviewer-action" hidden><h2>Independent review</h2><p class="muted">Only an authorized reviewer can make this decision.</p><div class="form-grid"><label for="review-deliverable-id">Deliverable ID<input id="review-deliverable-id" placeholder="Select a submitted version" /></label><label for="review-decision">Decision<select id="review-decision"><option value="approved">Approve</option><option value="revision_requested">Request revision</option></select></label><label for="review-comment" class="wide-field">Review comment<input id="review-comment" placeholder="Independent review note" /></label><button id="review-deliverable" class="primary-button">Submit review</button></div></section></section>
+          <section id="messages-view" class="view" aria-labelledby="messages-heading"><div class="page-heading"><div><p class="eyebrow">SUPPORT</p><h1 id="messages-heading">Messages</h1><p>Communicate with your authorized Data Fellows delivery lead.</p></div><button class="primary-button" disabled>New message</button></div><div class="panel empty-panel"><span class="empty-icon">▱</span><h2>No messages yet</h2><p>Supervisor communication will appear here when a scoped project channel is available.</p></div></section>
+          <section id="earnings-view" class="view" aria-labelledby="earnings-heading"><div class="page-heading"><div><p class="eyebrow">FINANCE</p><h1 id="earnings-heading">Earnings &amp; payments</h1><p>Only approved compensation agreements and verified payment events appear here.</p></div></div><div class="panel empty-panel"><span class="empty-icon">$</span><h2>No verified payment records</h2><p>Data Fellows will show eligible payables and verified payment history after an approved agreement exists.</p></div></section>
+          <section id="profile-view" class="view" aria-labelledby="profile-heading"><div class="page-heading"><div><p class="eyebrow">YOUR PROFILE</p><h1 id="profile-heading">Professional profile</h1><p>Keep your delivery profile accurate for Data Fellows review.</p></div><button class="secondary-button" disabled>Editing coming soon</button></div><div class="profile-grid"><section class="panel profile-card"><div class="profile-hero"><span class="large-avatar">AJ</span><div><h2 id="profile-name">Alex Johnson</h2><p>Approved professional · <span id="profile-id">professional-1</span></p></div></div><dl class="profile-details"><div><dt>Vetting status</dt><dd><span class="status-badge success">Approved</span></dd></div><div><dt>Specializations</dt><dd>Not provided</dd></div><div><dt>Availability</dt><dd>Not provided</dd></div><div><dt>Portfolio</dt><dd>Not provided</dd></div></dl></section><section class="panel"><h2>Access &amp; privacy</h2><p class="muted">Project access is granted per assignment and can be revoked by Data Fellows. Client identities and unrelated project data remain protected.</p><div class="privacy-row"><span>Authentication</span><strong>Synthetic test adapter</strong></div><div class="privacy-row"><span>Delivery access</span><strong>Scoped assignments only</strong></div></section></div></section>
+          <section id="help-view" class="view" aria-labelledby="help-heading"><div class="page-heading"><div><p class="eyebrow">SUPPORT</p><h1 id="help-heading">Help &amp; support</h1><p>Need clarification on an assignment or review? Contact your Data Fellows lead through an authorized project channel.</p></div></div><div class="help-grid"><section class="panel"><span class="help-icon">?</span><h2>Assignment questions</h2><p>Ask for clarification on scope, acceptance criteria or deadlines through your project workspace.</p></section><section class="panel"><span class="help-icon">◷</span><h2>Access concerns</h2><p>Data Fellows can review or revoke project access when the assignment changes.</p></section></div></section>
+
+          <details id="developer-tools" class="developer-tools"><summary>Developer test controls</summary><div class="test-toolbar"><label for="role">Role<select id="role"><option value="professional">Approved professional</option><option value="admin">Internal admin</option><option value="reviewer">Internal reviewer</option><option value="client">Client</option></select></label><label for="actor">Actor ID<input id="actor" value="professional-1" /></label><button id="refresh">Refresh workspace</button></div><div id="legacy-admin-controls" class="legacy-admin-controls" hidden><div class="form-grid"><label for="organization-name">Organization<input id="organization-name" placeholder="Synthetic organization" /></label><button id="create-organization">Create organization</button></div><div class="form-grid"><label for="engagement-organization">Organization ID<input id="engagement-organization" /></label><label for="engagement-name">Engagement<input id="engagement-name" /></label><label for="engagement-objective">Objective<input id="engagement-objective" /></label><button id="create-engagement">Create engagement</button></div><input id="engagement-id" type="hidden" /><div class="form-grid"><label for="project-engagement">Engagement ID<input id="project-engagement" /></label><label for="project-name">Project<input id="project-name" /></label><button id="create-project">Create project</button></div><div class="form-grid"><label for="project-id">Project ID<input id="project-id" /></label><label for="package-title">Work package<input id="package-title" /></label><label for="package-criteria">Acceptance criteria<input id="package-criteria" /></label><button id="create-package">Create work package</button></div><div class="form-grid"><label for="invite-package">Work package ID<input id="invite-package" /></label><label for="invite-professional">Professional ID<input id="invite-professional" /></label><button id="invite-professional-button">Invite professional</button></div><div class="form-grid"><label for="professional-id">Professional ID<input id="professional-id" /></label><button id="load-admissions">Load applications</button><button id="approve-professional">Approve professional</button><button id="reject-professional">Reject application</button></div><div class="form-grid"><label for="complete-project-id">Project ID<input id="complete-project-id" /></label><button id="complete-project">Complete project</button></div><div id="workspace-results"></div></div><div id="legacy-professional-controls" class="legacy-professional-controls"><div class="form-grid"><label for="assignment-id">Assignment ID<input id="assignment-id" /></label><button id="accept-assignment">Accept invitation</button><button id="decline-assignment">Decline invitation</button></div></div></details>
+          <div id="identity-status" class="status-toast" role="status" aria-live="polite"></div>
         </div>
-        <div class="form-grid">
-          <label for="engagement-organization">Organization ID <input id="engagement-organization" placeholder="UUID from the organization result" /></label>
-          <label for="engagement-name">Engagement name <input id="engagement-name" placeholder="Operational discovery" /></label>
-          <label for="engagement-objective">Objective <input id="engagement-objective" placeholder="Reduce manual reconciliation effort" /></label>
-          <button id="create-engagement">Create engagement</button>
-        </div>
-        <div class="form-grid">
-          <label for="members-organization">Organization ID <input id="members-organization" placeholder="UUID to inspect" /></label>
-          <button id="load-members">View authorized members</button>
-        </div>
-        <div class="form-grid">
-          <label for="revoke-organization">Organization ID <input id="revoke-organization" placeholder="UUID" /></label>
-          <label for="revoke-member">Member ID <input id="revoke-member" placeholder="Actor ID" /></label>
-          <label for="revoke-role">Role
-            <select id="revoke-role">
-              <option value="client">Client</option>
-              <option value="professional">Professional</option>
-              <option value="reviewer">Reviewer</option>
-              <option value="owner">Owner</option>
-            </select>
-          </label>
-          <button id="revoke-membership">Revoke membership</button>
-        </div>
-        <div class="form-grid">
-          <label for="professional-id">Professional ID <input id="professional-id" placeholder="Synthetic professional ID" /></label>
-          <button id="load-admissions">Load pending applications</button>
-          <button id="approve-professional">Approve professional</button>
-          <button id="reject-professional">Reject application</button>
-        </div>
-        <div class="form-grid">
-          <label for="project-engagement">Engagement ID <input id="project-engagement" placeholder="UUID" /></label>
-          <label for="project-name">Project name <input id="project-name" placeholder="Synthetic delivery project" /></label>
-          <button id="create-project">Create project</button>
-        </div>
-        <div class="form-grid">
-          <label for="project-id">Project ID <input id="project-id" placeholder="Created project UUID" /></label>
-          <label for="package-title">Work package title <input id="package-title" placeholder="Prepare implementation plan" /></label>
-          <label for="package-criteria">Acceptance criteria <input id="package-criteria" placeholder="Review complete, Evidence linked" /></label>
-          <button id="create-package">Create work package</button>
-        </div>
-        <div class="form-grid">
-          <label for="invite-package">Work package ID <input id="invite-package" placeholder="Created package UUID" /></label>
-          <label for="invite-professional">Professional ID <input id="invite-professional" placeholder="Approved professional ID" /></label>
-          <button id="invite-professional-button">Invite professional</button>
-        </div>
-      </section>
-      <section class="card" aria-labelledby="workspace-title">
-        <h2 id="workspace-title">Workspace</h2>
-        <div class="form-grid">
-          <label for="engagement-id">Engagement ID <input id="engagement-id" placeholder="UUID" /></label>
-          <button id="load-projects">Load authorized projects</button>
-        </div>
-        <div class="form-grid">
-          <label for="package-id">Work package ID <input id="package-id" placeholder="UUID" /></label>
-          <button id="load-deliverables">Load visible deliverables</button>
-        </div>
-        <div class="form-grid professional-only">
-          <button id="load-assignments">Load my assignments</button>
-          <label for="assignment-id">Assignment ID <input id="assignment-id" placeholder="Invitation ID" /></label>
-          <button id="accept-assignment">Accept invitation</button>
-          <button id="decline-assignment">Decline invitation</button>
-        </div>
-        <div class="form-grid professional-only">
-          <button id="submit-application">Submit professional application</button>
-        </div>
-        <div class="form-grid professional-only">
-          <label for="deliverable-title">Deliverable title <input id="deliverable-title" placeholder="Reviewed implementation plan" /></label>
-          <label for="deliverable-content">Deliverable content <input id="deliverable-content" placeholder="Synthetic, reviewable work product" /></label>
-          <button id="submit-deliverable">Submit deliverable version</button>
-        </div>
-        <div class="form-grid client-only">
-          <label for="deliverable-id">Deliverable ID <input id="deliverable-id" placeholder="UUID from the visible list" /></label>
-          <button id="accept-deliverable">Accept approved deliverable</button>
-        </div>
-        <div class="form-grid reviewer-only">
-          <label for="review-deliverable-id">Deliverable ID <input id="review-deliverable-id" placeholder="UUID to review" /></label>
-          <label for="review-decision">Decision
-            <select id="review-decision">
-              <option value="approved">Approve</option>
-              <option value="revision_requested">Request revision</option>
-            </select>
-          </label>
-          <label for="review-comment">Review comment <input id="review-comment" placeholder="Independent review note" /></label>
-          <button id="review-deliverable">Submit review</button>
-        </div>
-        <div class="form-grid admin-only">
-          <label for="complete-project-id">Project ID <input id="complete-project-id" placeholder="UUID after client acceptance" /></label>
-          <button id="complete-project">Complete project</button>
-        </div>
-        <div id="identity-status" class="status" role="status">Choose a synthetic identity and refresh.</div>
-        <div id="workspace-results" class="results" aria-live="polite"></div>
-      </section>
-    </main>
+      </main>
+    </div>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

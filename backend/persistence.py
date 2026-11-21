@@ -283,6 +283,15 @@ class PostgresRepository:
             )
             self._audit(cursor, None, actor, "professional.application_submitted", "professional", professional_id)
 
+    def get_professional_application(self, professional_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]}
+
     def decide_professional(self, professional_id: str, status: str, actor: str) -> None:
         if status not in {"approved", "rejected", "revoked"}:
             raise ValueError("Unsupported professional decision")
@@ -404,16 +413,85 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
-                """SELECT a.id, a.work_package_id, a.professional_id, a.status, a.expires_at, a.created_at
+                """SELECT a.id, a.work_package_id, a.professional_id, a.status, a.expires_at, a.created_at,
+                          w.title, p.name, e.name, e.objective
                    FROM assignments a
+                   JOIN work_packages w ON w.id = a.work_package_id
+                   JOIN projects p ON p.id = w.project_id
+                   JOIN engagements e ON e.id = p.engagement_id
                    WHERE a.professional_id = %s
-                   ORDER BY a.created_at""",
+                   ORDER BY a.created_at DESC""",
                 (professional_id,),
             )
             return [
-                {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5]}
+                {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5], "title": row[6], "project_name": row[7], "engagement_name": row[8], "objective": row[9]}
                 for row in cursor.fetchall()
             ]
+
+    def create_opportunity(self, title: str, summary: str, specialization: str, skills: list[str], compensation: str | None, deadline: datetime | None, actor: str) -> UUID:
+        opportunity_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO opportunities(id, title, summary, specialization, skills, compensation, deadline, status, created_by)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'published', %s)""",
+                (opportunity_id, title, summary, specialization, json.dumps(skills), compensation, deadline, actor),
+            )
+        return opportunity_id
+
+    def list_opportunities(self, professional_id: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if not admin:
+                cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+                if cursor.fetchone() is None:
+                    raise PermissionError("Professional approval is required to view opportunities")
+            cursor.execute("SELECT id, title, summary, specialization, skills, compensation, deadline, status, created_at FROM opportunities WHERE status = 'published' ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                cursor.execute("SELECT id, status FROM opportunity_interests WHERE opportunity_id = %s AND professional_id = %s", (row[0], professional_id))
+                interest = cursor.fetchone()
+                results.append({"id": str(row[0]), "title": row[1], "summary": row[2], "specialization": row[3], "skills": row[4], "compensation": row[5], "deadline": row[6], "status": row[7], "created_at": row[8], "interest_id": None if interest is None else str(interest[0]), "interest_status": None if interest is None else interest[1]})
+            return results
+
+    def express_interest(self, opportunity_id: UUID, professional_id: str, approach: str) -> UUID:
+        interest_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+            if cursor.fetchone() is None:
+                raise PermissionError("Professional approval is required to express interest")
+            cursor.execute("SELECT 1 FROM opportunities WHERE id = %s AND status = 'published'", (opportunity_id,))
+            if cursor.fetchone() is None:
+                raise LookupError("Opportunity not found")
+            cursor.execute(
+                """INSERT INTO opportunity_interests(id, opportunity_id, professional_id, approach, status)
+                   VALUES (%s, %s, %s, %s, 'interested')
+                   ON CONFLICT (opportunity_id, professional_id)
+                   DO UPDATE SET approach = EXCLUDED.approach, status = 'interested'
+                   RETURNING id""",
+                (interest_id, opportunity_id, professional_id, approach),
+            )
+            interest_id = cursor.fetchone()[0]
+        return interest_id
+
+    def list_opportunity_interests(self, admin: str) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id, opportunity_id, professional_id, approach, status, created_at FROM opportunity_interests ORDER BY created_at DESC")
+            return [{"id": str(row[0]), "opportunity_id": str(row[1]), "professional_id": row[2], "approach": row[3], "status": row[4], "created_at": row[5]} for row in cursor.fetchall()]
+
+    def decide_opportunity_interest(self, interest_id: UUID, decision: str) -> dict[str, Any]:
+        if decision not in {"selected", "withdrawn"}:
+            raise ValueError("Unsupported opportunity decision")
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("UPDATE opportunity_interests SET status = %s WHERE id = %s RETURNING id, opportunity_id, professional_id, approach, status, created_at", (decision, interest_id))
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Opportunity interest not found")
+            return {"id": str(row[0]), "opportunity_id": str(row[1]), "professional_id": row[2], "approach": row[3], "status": row[4], "created_at": row[5]}
 
     def create_ai_run(self, package_id: UUID, requested_by: str, specification: str, budget_cents: int, output: dict[str, Any]) -> tuple[UUID, UUID, UUID]:
         run_id, artifact_id = uuid4(), uuid4()
