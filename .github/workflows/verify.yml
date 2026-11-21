@@ -36,3 +36,16 @@ jobs:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
       - run: python -m unittest discover -s backend -p 'test_*.py' -v
+
+  containers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate backend Dockerfile
+        run: docker build --check --file backend/Dockerfile .
+      - name: Validate frontend Dockerfile
+        run: docker build --check --file frontend/Dockerfile .
