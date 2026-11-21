@@ -270,6 +270,66 @@ class PostgresRepository:
                 for row in cursor.fetchall()
             ]
 
+    def client_overview(self, actor: str) -> dict[str, Any]:
+        """Build a client-safe read model from active client memberships only."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT o.id, o.name, o.created_at
+                   FROM organizations o JOIN memberships m ON m.organization_id = o.id
+                   WHERE m.actor_id = %s AND m.role = 'client' AND m.revoked_at IS NULL
+                   ORDER BY o.created_at""",
+                (actor,),
+            )
+            organizations = [{"id": str(row[0]), "name": row[1], "created_at": row[2]} for row in cursor.fetchall()]
+            organization_ids = [item["id"] for item in organizations]
+            if not organization_ids:
+                raise PermissionError("An active client membership is required")
+            cursor.execute(
+                """SELECT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at, o.name
+                   FROM engagements e JOIN organizations o ON o.id = e.organization_id
+                   WHERE e.organization_id = ANY(%s::uuid[]) ORDER BY e.created_at""",
+                (organization_ids,),
+            )
+            engagements = [{"id": str(row[0]), "organization_id": str(row[1]), "name": row[2], "objective": row[3], "status": row[4], "created_at": row[5], "organization_name": row[6]} for row in cursor.fetchall()]
+            engagement_ids = [item["id"] for item in engagements]
+            if not engagement_ids:
+                return {"organizations": organizations, "engagements": [], "projects": [], "deliverables": [], "metrics": {"active_projects": 0, "completed_projects": 0, "deliverables_for_review": 0, "accepted_deliverables": 0}}
+            cursor.execute(
+                """SELECT p.id, p.engagement_id, p.name, p.status, p.created_at, e.name, o.name
+                   FROM projects p JOIN engagements e ON e.id = p.engagement_id JOIN organizations o ON o.id = e.organization_id
+                   WHERE p.engagement_id = ANY(%s::uuid[]) ORDER BY p.created_at""",
+                (engagement_ids,),
+            )
+            project_rows = cursor.fetchall()
+            projects: list[dict[str, Any]] = []
+            deliverables: list[dict[str, Any]] = []
+            for row in project_rows:
+                project = {"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4], "engagement_name": row[5], "organization_name": row[6], "work_packages": []}
+                cursor.execute("SELECT id, title, acceptance_criteria, status, created_at FROM work_packages WHERE project_id = %s ORDER BY created_at", (row[0],))
+                for package_row in cursor.fetchall():
+                    cursor.execute(
+                        """SELECT id, work_package_id, version, title, content, status, created_at
+                           FROM deliverables WHERE work_package_id = %s AND status IN ('approved', 'accepted') ORDER BY version""",
+                        (package_row[0],),
+                    )
+                    versions = [{"id": str(item[0]), "work_package_id": str(item[1]), "version": item[2], "title": item[3], "content": item[4], "status": item[5], "created_at": item[6]} for item in cursor.fetchall()]
+                    deliverables.extend(versions)
+                    project["work_packages"].append({"id": str(package_row[0]), "project_id": str(row[0]), "title": package_row[1], "acceptance_criteria": package_row[2], "status": package_row[3], "created_at": package_row[4], "deliverables": versions})
+                projects.append(project)
+            return {
+                "organizations": organizations,
+                "engagements": engagements,
+                "projects": projects,
+                "deliverables": deliverables,
+                "metrics": {
+                    "active_projects": sum(item["status"] == "active" for item in projects),
+                    "completed_projects": sum(item["status"] == "completed" for item in projects),
+                    "deliverables_for_review": sum(item["status"] == "approved" for item in deliverables),
+                    "accepted_deliverables": sum(item["status"] == "accepted" for item in deliverables),
+                },
+            }
+
     def create_work_package(self, project_id: UUID, title: str, acceptance_criteria: list[str], depends_on: list[UUID], actor: str) -> UUID:
         package_id = uuid4()
         with self.transaction() as connection:
@@ -801,6 +861,31 @@ class PostgresRepository:
             cursor.execute("UPDATE deliverables SET status = 'accepted' WHERE id = %s", (deliverable_id,))
             self._audit(cursor, organization_id, client_id, "deliverable.client_accepted", "deliverable", str(deliverable_id))
             return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "accepted", "accepted_by": client_id}
+
+    def request_client_revision(self, deliverable_id: UUID, client_id: str, comment: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT d.work_package_id, d.version, d.title, d.content, d.submitted_by, d.status, e.organization_id
+                   FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id
+                   JOIN projects p ON p.id = w.project_id JOIN engagements e ON e.id = p.engagement_id
+                   WHERE d.id = %s""",
+                (deliverable_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Deliverable not found")
+            package_id, version, title, content, submitted_by, current_status, organization_id = row
+            cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'client' AND revoked_at IS NULL", (organization_id, client_id))
+            if cursor.fetchone() is None:
+                raise PermissionError("Client is not authorized for this organization")
+            if current_status != "approved":
+                raise ValueError("Only an internally approved deliverable can be sent back for revision")
+            request_id = uuid4()
+            cursor.execute("UPDATE deliverables SET status = 'revision_requested' WHERE id = %s", (deliverable_id,))
+            cursor.execute("INSERT INTO client_revision_requests(id, deliverable_id, client_id, comment) VALUES (%s, %s, %s, %s)", (request_id, deliverable_id, client_id, comment))
+            self._audit(cursor, organization_id, client_id, "deliverable.client_revision_requested", "deliverable", str(deliverable_id), {"comment": comment})
+            return {"deliverable": {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "revision_requested"}, "revision_request": {"id": str(request_id), "deliverable_id": str(deliverable_id), "client_id": client_id, "comment": comment}}
 
     def complete_project(self, project_id: UUID, actor: str) -> dict[str, Any]:
         with self.transaction() as connection:

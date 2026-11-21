@@ -100,6 +100,33 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(overview.json()["projects"][0]["organization_name"], "Mission Control client")
         self.assertEqual(self.client.get("/api/admin/overview", headers=self.professional).status_code, 403)
 
+    def test_client_overview_is_safe_and_client_decisions_are_audited(self) -> None:
+        organization = self.post("/api/organizations", {"name": "Client portal org"}, self.admin)
+        org_id = organization["id"]
+        self.post(f"/api/organizations/{org_id}/members", {"actor_id": "client-1", "role": "client"}, self.admin)
+        self.post(f"/api/organizations/{org_id}/members", {"actor_id": "reviewer-1", "role": "reviewer"}, self.admin)
+        self.post(f"/api/organizations/{org_id}/members", {"actor_id": "professional-1", "role": "professional"}, self.admin)
+        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Client delivery", "objective": "Publish a reviewed outcome"}, self.admin)
+        project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Client portal project"}, self.admin)
+        package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Reviewed handoff", "acceptance_criteria": ["Client can verify the outcome"]}, self.admin)
+        invite = self.post(f"/api/work-packages/{package['id']}/assignments", {"professional_id": "professional-1"}, self.admin)
+        self.post(f"/api/assignments/{invite['id']}/accept", {}, self.professional)
+        deliverable = self.post("/api/deliverables", {"work_package_id": package["id"], "title": "Outcome summary", "content": "Synthetic verified outcome"}, self.professional)
+        self.post(f"/api/deliverables/{deliverable['id']}/review", {"decision": "approved", "comment": "Independent review complete"}, self.reviewer)
+        overview = self.client.get("/api/client/overview", headers=self.client_user)
+        self.assertEqual(overview.status_code, 200)
+        payload = overview.json()
+        self.assertEqual(payload["projects"][0]["name"], "Client portal project")
+        self.assertEqual(payload["metrics"]["deliverables_for_review"], 1)
+        self.assertNotIn("submitted_by", payload["deliverables"][0])
+        revision = self.client.post(f"/api/deliverables/{deliverable['id']}/client-revision", json={"comment": "Please clarify the measurement period."}, headers=self.client_user)
+        self.assertEqual(revision.status_code, 200)
+        self.assertEqual(revision.json()["deliverable"]["status"], "revision_requested")
+        self.assertEqual(self.client.get("/api/client/overview", headers=auth("client-2", "client")).status_code, 403)
+        actions = {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()}
+        self.assertIn("deliverable.client_revision_requested", actions)
+
     def test_unapproved_professional_and_cross_organization_access_are_denied(self) -> None:
         first = self.post("/api/organizations", {"name": "First synthetic org"}, self.admin)
         second = self.post("/api/organizations", {"name": "Second synthetic org"}, self.admin)

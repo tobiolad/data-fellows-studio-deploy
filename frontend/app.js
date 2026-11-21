@@ -4,6 +4,7 @@ const actor = document.querySelector("#actor");
 const identityStatus = document.querySelector("#identity-status");
 let assignments = [];
 let opportunities = [];
+let clientData = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -89,6 +90,7 @@ $("#mobile-menu").addEventListener("click", () => $(".nav-list").classList.toggl
 $("#refresh").addEventListener("click", refresh); $("#load-assignments").addEventListener("click", loadAssignments); $("#role").addEventListener("change", syncRole);
 $("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable);
 $("#opportunity-filter").addEventListener("change", renderOpportunities); $("#opportunity-search").addEventListener("input", renderOpportunities);
+$("#client-refresh").addEventListener("click", loadClientOverview); $("#client-project-search").addEventListener("input", renderClientProjects); $("#client-project-status").addEventListener("change", renderClientProjects);
 $("#create-organization").addEventListener("click", createOrganization); $("#create-engagement").addEventListener("click", createEngagement); $("#create-project").addEventListener("click", createProject); $("#create-package").addEventListener("click", createWorkPackage); $("#invite-professional-button").addEventListener("click", inviteProfessional); $("#accept-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "accept")); $("#decline-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "decline")); $("#load-admissions").addEventListener("click", loadAdmissions); $("#approve-professional").addEventListener("click", () => decideProfessional("approved")); $("#reject-professional").addEventListener("click", () => decideProfessional("rejected")); $("#complete-project").addEventListener("click", completeProject);
 syncRole(); navigate(location.hash.slice(1) || "overview"); refresh();
 
@@ -156,11 +158,63 @@ function renderAdminLists(view) {
   if (view === "admin-ai") { const host = $("#admin-ai-list"); host.querySelectorAll(".admin-card").forEach((card, index) => { const item = adminData.ai_runs[index]; if (!item) return; if (item.artifact_status === "pending_review") card.insertAdjacentHTML("beforeend", `<div class="card-footer"><button class="primary-button ai-approve-button" data-run-id="${escapeHtml(item.id)}">Approve artifact</button><button class="secondary-button ai-reject-button" data-run-id="${escapeHtml(item.id)}">Reject</button></div>`); else card.insertAdjacentHTML("beforeend", `<div class="card-footer"><small>Artifact ${escapeHtml(item.artifact_status || "not available")}</small><button class="secondary-button admin-detail-button" data-admin-detail="ai" data-record-id="${escapeHtml(item.id)}">Open run</button></div>`); }); $$(".ai-approve-button").forEach((button) => button.addEventListener("click", () => decideAdminAI(button.dataset.runId, "approved"))); $$(".ai-reject-button").forEach((button) => button.addEventListener("click", () => decideAdminAI(button.dataset.runId, "rejected"))); }
 }
 async function loadAdminOverview() { try { adminData = await request("/api/admin/overview"); renderAdminOverview(); renderAdminLists(location.hash.slice(1) || "admin-overview"); } catch (error) { showMessage(error.message, "error"); } }
+
+function clientStatus(status) {
+  const tone = status === "completed" || status === "accepted" ? "success" : status === "approved" ? "info" : status === "revision_requested" ? "warning" : "neutral";
+  return `<span class="status-badge ${tone}">${escapeHtml(statusLabel(status))}</span>`;
+}
+function clientUnavailable(title, text) { return `<div class="client-unavailable"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(text)}</span></div>`; }
+function clientProjectCard(project) {
+  const packages = project.work_packages || [];
+  const versions = packages.flatMap((item) => item.deliverables || []);
+  const latest = versions.length ? versions[versions.length - 1] : null;
+  const progress = project.status === "completed" ? 100 : null;
+  const progressLabel = progress === 100 ? "Complete" : packages.length ? `${packages.length} work package${packages.length === 1 ? "" : "s"} recorded` : "Progress not recorded";
+  return `<article class="panel client-project-card"><div class="client-project-heading"><div><p class="eyebrow">${escapeHtml(project.organization_name || "CLIENT ORGANIZATION")}</p><h2>${escapeHtml(project.name)}</h2><p>${escapeHtml(project.engagement_name || "Authorized engagement")}</p></div>${clientStatus(project.status)}</div><div class="client-progress"><div class="client-progress-label"><span>Delivery progress</span><strong>${escapeHtml(progressLabel)}</strong></div>${progress === 100 ? `<div class="progress-track" aria-label="Project complete"><span style="width:100%"></span></div>` : `<p class="muted progress-unavailable">No percentage is published until a verified milestone record exists.</p>`}</div><div class="client-package-list">${packages.length ? packages.map((item) => `<div class="client-package"><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml((item.acceptance_criteria || []).join(" · ") || "Acceptance criteria recorded")}</small></div><span>${item.deliverables?.length ? clientStatus(item.deliverables[item.deliverables.length - 1].status) : "<span class=\"status-badge neutral\">In progress</span>"}</span></div>`).join("") : `<p class="muted">No work packages have been published for this project.</p>`}</div><div class="card-footer"><small>${latest ? `Latest deliverable v${latest.version}` : "No deliverable submitted"}</small><button class="secondary-button client-project-open" data-project-id="${escapeHtml(project.id)}">View project</button></div></article>`;
+}
+function renderClientMetrics() {
+  const m = clientData?.metrics || {};
+  $("#client-metric-grid").innerHTML = [
+    adminMetric("Active projects", m.active_projects || 0, "blue", "Authorized delivery work"),
+    adminMetric("Completed projects", m.completed_projects || 0, "green", "Client-accepted outcomes"),
+    adminMetric("Deliverables to review", m.deliverables_for_review || 0, "orange", "Approved by Data Fellows"),
+    adminMetric("Accepted deliverables", m.accepted_deliverables || 0, "purple", "Your recorded decisions"),
+  ].join("");
+}
+function renderClientOverview() {
+  if (!clientData) return;
+  renderClientMetrics();
+  const projects = clientData.projects || [];
+  $("#client-project-list").innerHTML = projects.length ? projects.slice(0, 4).map(clientProjectCard).join("") : emptyState("No projects yet", "Authorized engagements will appear here when Data Fellows starts delivery.");
+  const pending = (clientData.deliverables || []).filter((item) => item.status === "approved");
+  $("#client-attention-list").innerHTML = pending.length ? pending.slice(0, 4).map((item) => `<div class="summary-row"><span><strong>${escapeHtml(item.title)}</strong><small>Version ${item.version} ready for your review</small></span><button class="text-button client-review-link" data-deliverable-id="${escapeHtml(item.id)}">Review →</button></div>`).join("") : `<p class="muted">No approved deliverables need your attention.</p>`;
+  $("#client-outcomes-summary").innerHTML = [clientUnavailable("Project documents", "No document records are linked to this workspace yet."), clientUnavailable("Billing", "Verified invoice and payment events are not available."), clientUnavailable("Operational outcomes", "Outcome measures appear after approved records are connected.")].join("");
+  $$(".client-project-open").forEach((button) => button.addEventListener("click", () => { navigate("client-projects"); const target = $("#client-projects-list").querySelector(`[data-project-id=\"${CSS.escape(button.dataset.projectId)}\"]`); target?.scrollIntoView({ behavior: "smooth", block: "center" }); }));
+  $$(".client-review-link").forEach((button) => button.addEventListener("click", () => { navigate("client-deliverables"); document.querySelector(`[data-deliverable-id=\"${CSS.escape(button.dataset.deliverableId)}\"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }));
+}
+function renderClientProjects() {
+  const query = $("#client-project-search").value.trim().toLowerCase();
+  const status = $("#client-project-status").value;
+  const visible = (clientData?.projects || []).filter((item) => (!status || item.status === status) && (!query || `${item.name} ${item.organization_name} ${item.engagement_name}`.toLowerCase().includes(query)));
+  $("#client-projects-list").innerHTML = visible.length ? visible.map(clientProjectCard).join("") : emptyState("No projects match", "Try a different search or status filter.");
+  $$(".client-project-open").forEach((button) => button.addEventListener("click", () => showMessage("Project details are shown in the delivery card. Scoped documents will appear when available.", "info")));
+}
+function renderClientDeliverables() {
+  const items = clientData?.deliverables || [];
+  $("#client-deliverables-list").innerHTML = items.length ? items.map((item) => `<article class="panel client-deliverable-card" data-deliverable-id="${escapeHtml(item.id)}"><div class="panel-heading"><div><p class="eyebrow">VERSIONED WORK PRODUCT</p><h2>${escapeHtml(item.title)}</h2><p>Version ${item.version} · Approved by Data Fellows</p></div>${clientStatus(item.status)}</div><div class="client-deliverable-content">${escapeHtml(item.content)}</div><div class="card-footer"><small>Immutable version record · decision remains auditable</small><div class="client-action-row">${item.status === "approved" ? `<button class="secondary-button client-revision-button" data-deliverable-id="${escapeHtml(item.id)}">Request revision</button><button class="primary-button client-accept-button" data-deliverable-id="${escapeHtml(item.id)}">Accept deliverable</button>` : `<span class="muted">Accepted on record</span>`}</div></div><div class="client-revision-form" data-revision-for="${escapeHtml(item.id)}" hidden><label>Revision request<textarea rows="2" placeholder="Tell Data Fellows what needs changing"></textarea></label><button class="primary-button submit-client-revision" data-deliverable-id="${escapeHtml(item.id)}">Send request</button></div></article>`).join("") : emptyState("No deliverables ready for review", "Internally approved versions will appear here before client acceptance.");
+  $$(".client-accept-button").forEach((button) => button.addEventListener("click", () => acceptClientDeliverable(button.dataset.deliverableId)));
+  $$(".client-revision-button").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); if (form) form.hidden = false; }));
+  $$(".submit-client-revision").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); requestClientRevision(button.dataset.deliverableId, form?.querySelector("textarea")?.value || ""); }));
+}
+async function loadClientOverview() { try { clientData = await request("/api/client/overview"); renderClientOverview(); renderClientProjects(); renderClientDeliverables(); } catch (error) { showMessage(error.message, "error"); ["#client-project-list", "#client-projects-list", "#client-deliverables-list"].forEach((selector) => { if ($(selector)) $(selector).innerHTML = emptyState("Client workspace unavailable", error.message); }); } }
+async function acceptClientDeliverable(id) { try { await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" }); showMessage("Your acceptance was recorded.", "success"); await loadClientOverview(); } catch (error) { showMessage(error.message, "error"); } }
+async function requestClientRevision(id, comment) { if (!comment.trim()) return showMessage("Add a revision request before sending.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/client-revision`, { method: "POST", body: JSON.stringify({ comment }) }); showMessage("Revision request sent to Data Fellows.", "success"); await loadClientOverview(); } catch (error) { showMessage(error.message, "error"); } }
 function navigate(viewName) {
   const view = viewName || (role.value === "admin" ? "admin-overview" : "overview");
   $$(".view").forEach((item) => item.classList.toggle("active-view", item.id === `${view}-view`));
   $$('[data-view]').forEach((link) => link.classList.toggle("active", link.dataset.view === view));
   if (view.startsWith("admin-") && role.value === "admin") { loadAdminOverview(); }
+  if (view.startsWith("client-") && role.value === "client") { if (!clientData) loadClientOverview(); else { renderClientOverview(); renderClientProjects(); renderClientDeliverables(); } }
   if (view === "opportunities") loadOpportunities();
   if (view === "deliverables") loadSelectedDeliverables();
   if (view === "reviews") renderReviews();
@@ -168,19 +222,24 @@ function navigate(viewName) {
 }
 function syncRole() {
   const isAdmin = role.value === "admin";
+  const isClient = role.value === "client";
   actor.value = isAdmin ? "admin-1" : `${role.value}-1`;
   $("#legacy-admin-controls").hidden = !isAdmin;
   $("#review-action").hidden = role.value !== "reviewer";
   $("#client-acceptance").hidden = role.value !== "client";
   $("#primary-nav").hidden = isAdmin;
   $("#admin-nav").hidden = !isAdmin;
-  $("#portal-label").textContent = isAdmin ? "Mission Control" : "Professional portal";
-  $("#user-name").textContent = isAdmin ? "Data Fellows Admin" : role.value === "professional" ? "Alex Johnson" : statusLabel(role.value);
-  $("#user-role").textContent = isAdmin ? "Internal admin" : role.value === "professional" ? "Approved professional" : statusLabel(role.value);
+  $("#client-nav").hidden = !isClient;
+  $("#primary-nav").hidden = isAdmin || isClient;
+  $("#portal-label").textContent = isAdmin ? "Mission Control" : isClient ? "Client portal" : "Professional portal";
+  $("#user-name").textContent = isAdmin ? "Data Fellows Admin" : role.value === "professional" ? "Alex Johnson" : isClient ? "Client workspace" : statusLabel(role.value);
+  $("#user-role").textContent = isAdmin ? "Internal admin" : role.value === "professional" ? "Approved professional" : isClient ? "Authorized client" : statusLabel(role.value);
   if (isAdmin) showMessage("admin-1 · admin · API connected", "success");
   $("#developer-tools").open = isAdmin;
   if (isAdmin && !location.hash.startsWith("#admin-")) { history.replaceState(null, "", "#admin-overview"); navigate("admin-overview"); }
   if (!isAdmin && location.hash.startsWith("#admin-")) { history.replaceState(null, "", "#overview"); navigate("overview"); }
+  if (isClient && !location.hash.startsWith("#client-")) { history.replaceState(null, "", "#client-overview"); navigate("client-overview"); }
+  if (!isClient && location.hash.startsWith("#client-")) { history.replaceState(null, "", "#overview"); navigate("overview"); }
   if (role.value === "professional") $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value;
 }
-async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = role.value === "admin" ? "Internal admin" : me.roles.includes("professional") ? "Approved professional" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); if (role.value === "admin") await loadAdminOverview(); else { await loadAssignments(); await loadApplication(); } } catch (error) { showMessage(error.message, "error"); } }
+async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = role.value === "admin" ? "Internal admin" : me.roles.includes("professional") ? "Approved professional" : me.roles.includes("client") ? "Authorized client" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); if (role.value === "admin") await loadAdminOverview(); else if (role.value === "client") await loadClientOverview(); else { await loadAssignments(); await loadApplication(); } } catch (error) { showMessage(error.message, "error"); } }

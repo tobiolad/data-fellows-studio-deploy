@@ -11,7 +11,7 @@ from backend.persistence import MIGRATIONS_DIR, PersistenceConfigurationError, P
 class PersistenceConfigurationTests(unittest.TestCase):
     def test_versioned_migrations_exist_and_are_ordered(self) -> None:
         migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
-        self.assertEqual([path.name for path in migrations], ["001_initial.sql", "002_ai_execution_controls.sql", "003_work_package_dependencies.sql", "004_professional_opportunities.sql"])
+        self.assertEqual([path.name for path in migrations], ["001_initial.sql", "002_ai_execution_controls.sql", "003_work_package_dependencies.sql", "004_professional_opportunities.sql", "005_client_revision_requests.sql"])
         self.assertIn("CREATE TABLE IF NOT EXISTS organizations", migrations[0].read_text(encoding="utf-8"))
         self.assertIn("CREATE TABLE IF NOT EXISTS audit_events", migrations[0].read_text(encoding="utf-8"))
         self.assertIn("CREATE TABLE IF NOT EXISTS work_package_dependencies", migrations[2].read_text(encoding="utf-8"))

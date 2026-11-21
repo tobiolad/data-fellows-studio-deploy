@@ -36,7 +36,7 @@ async function main() {
       select.dispatchEvent(new Event("change", { bubbles: true }));
       document.querySelector("#developer-tools").open = true;
     }, value);
-    await page.click("#refresh");
+    await page.evaluate(() => document.querySelector("#refresh").click());
   };
   const fillAndClick = async (fields, button) => {
     for (const [selector, value] of Object.entries(fields)) await page.locator(selector).fill(value);
@@ -105,11 +105,9 @@ async function main() {
     await screenshot("playwright-reviewer-1440");
 
     await role("client");
-    await page.click('[data-view="deliverables"]');
-    await page.fill("#package-id", packageId);
-    await page.click("#load-deliverables");
-    await page.fill("#deliverable-id", deliverableId);
-    await page.click("#accept-deliverable");
+    await page.click('[data-view="client-deliverables"]');
+    await page.waitForSelector("#client-deliverables-list .client-deliverable-card");
+    await page.click(`#client-deliverables-list .client-accept-button[data-deliverable-id="${deliverableId}"]`);
     await page.setViewportSize({ width: 390, height: 844 });
     await screenshot("playwright-client-390x844");
 

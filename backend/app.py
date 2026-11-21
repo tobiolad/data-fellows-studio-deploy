@@ -46,6 +46,7 @@ class Store:
     artifacts: dict[str, dict] = field(default_factory=dict)
     deliverables: dict[str, dict] = field(default_factory=dict)
     reviews: dict[str, dict] = field(default_factory=dict)
+    client_revision_requests: dict[str, dict] = field(default_factory=dict)
     opportunities: dict[str, dict] = field(default_factory=dict)
     opportunity_interests: dict[str, dict] = field(default_factory=dict)
     audit: list[dict] = field(default_factory=list)
@@ -75,6 +76,7 @@ class Store:
         self.artifacts.clear()
         self.deliverables.clear()
         self.reviews.clear()
+        self.client_revision_requests.clear()
         self.opportunities.clear()
         self.opportunity_interests.clear()
         self.audit.clear()
@@ -246,6 +248,10 @@ class DeliverableCreate(BaseModel):
 class ReviewCreate(BaseModel):
     decision: Literal["approved", "revision_requested"]
     comment: str = Field(default="", max_length=2000)
+
+
+class ClientRevisionCreate(BaseModel):
+    comment: str = Field(min_length=2, max_length=2000)
 
 
 class OpportunityCreate(BaseModel):
@@ -561,6 +567,58 @@ def admin_overview(request: Request) -> dict:
             "ai_failed": len(failed_ai),
         },
     }
+
+
+def _memory_client_overview(actor: Identity) -> dict:
+    """Return only records belonging to organizations where the actor is a client."""
+    organization_ids = {
+        organization_id
+        for (member_id, organization_id), roles in store.memberships.items()
+        if member_id == actor.actor_id and "client" in roles
+    }
+    if not organization_ids:
+        raise HTTPException(status_code=403, detail="An active client membership is required")
+    organizations = [item for item in store.organizations.values() if item["id"] in organization_ids]
+    engagements = [item for item in store.engagements.values() if item["organization_id"] in organization_ids]
+    engagement_ids = {item["id"] for item in engagements}
+    projects = []
+    deliverables = []
+    for project in store.projects.values():
+        engagement = store.engagements.get(project["engagement_id"])
+        if not engagement or engagement["id"] not in engagement_ids:
+            continue
+        packages = []
+        for package in store.work_packages.values():
+            if package["project_id"] != project["id"]:
+                continue
+            versions = [item for item in store.deliverables.values() if item["work_package_id"] == package["id"] and item["status"] in {"approved", "accepted"}]
+            safe_versions = [{key: value for key, value in item.items() if key != "submitted_by"} for item in sorted(versions, key=lambda item: item["version"])]
+            deliverables.extend(safe_versions)
+            packages.append({**package, "deliverables": safe_versions})
+        projects.append({**project, "engagement_name": engagement["name"], "organization_name": store.organizations.get(engagement["organization_id"], {}).get("name"), "work_packages": packages})
+    return {
+        "organizations": organizations,
+        "engagements": engagements,
+        "projects": projects,
+        "deliverables": deliverables,
+        "metrics": {
+            "active_projects": sum(item["status"] == "active" for item in projects),
+            "completed_projects": sum(item["status"] == "completed" for item in projects),
+            "deliverables_for_review": sum(item["status"] == "approved" for item in deliverables),
+            "accepted_deliverables": sum(item["status"] == "accepted" for item in deliverables),
+        },
+    }
+
+
+@app.get("/api/client/overview")
+def client_overview(request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().client_overview(actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return _memory_client_overview(actor)
 
 
 @app.get("/api/engagements/{engagement_id}/projects")
@@ -1105,6 +1163,35 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
     deliverable["accepted_at"] = now()
     audit_response(actor, "deliverable", deliverable_id, "deliverable.client_accepted", org_id)
     return deliverable
+
+
+@app.post("/api/deliverables/{deliverable_id}/client-revision")
+def request_client_revision(deliverable_id: str, body: ClientRevisionCreate, request: Request) -> dict:
+    """Allow an authorized client to request a revision without changing the immutable version."""
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().request_client_revision(UUID(deliverable_id), actor.actor_id, body.comment)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    deliverable = store.deliverables.get(deliverable_id)
+    if not deliverable:
+        raise HTTPException(status_code=404, detail="Deliverable not found")
+    project = project_for_package(deliverable["work_package_id"])
+    org_id = organization_for_engagement(project["engagement_id"])
+    if "client" not in store.memberships.get((actor.actor_id, org_id), set()):
+        raise HTTPException(status_code=403, detail="Only an active client membership may request a revision")
+    if deliverable["status"] != "approved":
+        raise HTTPException(status_code=409, detail="Only an internally approved deliverable can be sent back for revision")
+    deliverable["status"] = "revision_requested"
+    request_id = str(uuid4())
+    store.client_revision_requests[request_id] = {"id": request_id, "deliverable_id": deliverable_id, "client_id": actor.actor_id, "comment": body.comment, "created_at": now()}
+    audit_response(actor, "deliverable", deliverable_id, "deliverable.client_revision_requested", org_id)
+    return {"deliverable": deliverable, "revision_request": store.client_revision_requests[request_id]}
 
 
 @app.post("/api/projects/{project_id}/complete")
