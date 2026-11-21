@@ -20,6 +20,8 @@ STUDIO_TEST_MODE=true uvicorn backend.app:app --reload --port 8100
 
 The lightweight demo UI is `frontend/index.html`. It is intentionally labelled as a synthetic harness until Entra registrations and a real frontend build are approved.
 
+`GET /health` is a liveness check and does not prove that deployment configuration is safe. `GET /ready` is the release-readiness check: local development may use the synthetic adapter, but staging and production require `STUDIO_ENTRA_ENABLED=true` with tenant/audience configuration and PostgreSQL persistence with `STUDIO_DATABASE_URL`. The readiness endpoint does not replace a live database migration or connectivity test.
+
 ## Security boundary
 
 - Public registration does not exist.

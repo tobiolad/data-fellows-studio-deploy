@@ -192,6 +192,36 @@ class StudioLifecycleTests(unittest.TestCase):
         finally:
             os.environ["STUDIO_TEST_MODE"] = "true"
 
+    def test_readiness_allows_local_synthetic_development(self) -> None:
+        with patch.dict(os.environ, {"STUDIO_ENV": "development", "STUDIO_TEST_MODE": "true", "STUDIO_PERSISTENCE": "memory"}):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+
+    def test_readiness_rejects_synthetic_identity_in_staging(self) -> None:
+        with patch.dict(os.environ, {"STUDIO_ENV": "staging", "STUDIO_TEST_MODE": "true", "STUDIO_PERSISTENCE": "postgres"}, clear=False):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.json()["detail"]["checks"]["test_identity_disabled_for_staging"])
+
+    def test_readiness_accepts_configured_staging_boundaries(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "STUDIO_ENV": "staging",
+                "STUDIO_TEST_MODE": "false",
+                "STUDIO_ENTRA_ENABLED": "true",
+                "STUDIO_ENTRA_TENANT_ID": "synthetic-tenant",
+                "STUDIO_ENTRA_AUDIENCE": "api://studio",
+                "STUDIO_PERSISTENCE": "postgres",
+                "STUDIO_DATABASE_URL": "postgresql://placeholder",
+            },
+            clear=False,
+        ):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["persistence"], "postgres")
+
     def test_entra_enabled_requests_use_validator_boundary(self) -> None:
         class FakeValidator:
             def validate(self, token: str) -> Principal:

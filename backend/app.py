@@ -248,6 +248,27 @@ def health() -> dict:
     return {"status": "ok", "mode": "synthetic" if os.getenv("STUDIO_TEST_MODE", "false").lower() == "true" else "entra-required"}
 
 
+@app.get("/ready")
+def ready() -> dict:
+    """Fail closed when deployment configuration cannot safely accept traffic."""
+    deployment_env = os.getenv("STUDIO_ENV", "development").strip().lower()
+    test_mode = os.getenv("STUDIO_TEST_MODE", "false").lower() == "true"
+    persistence = os.getenv("STUDIO_PERSISTENCE", "memory").strip().lower()
+    checks = {
+        "test_identity_disabled_for_staging": not (deployment_env in {"staging", "production"} and test_mode),
+        "entra_configured": test_mode or (
+            os.getenv("STUDIO_ENTRA_ENABLED", "false").lower() == "true"
+            and bool(os.getenv("STUDIO_ENTRA_TENANT_ID", "").strip())
+            and bool(os.getenv("STUDIO_ENTRA_AUDIENCE", "").strip())
+        ),
+        "postgres_configured": (test_mode and deployment_env not in {"staging", "production"})
+        or (persistence == "postgres" and bool(os.getenv("STUDIO_DATABASE_URL", "").strip())),
+    }
+    if not all(checks.values()):
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    return {"status": "ready", "environment": deployment_env, "persistence": persistence, "checks": checks}
+
+
 @app.get("/api/me")
 def me(request: Request) -> dict:
     actor = identity(request)
