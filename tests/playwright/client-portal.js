@@ -67,6 +67,7 @@ async function main() {
     await page.waitForTimeout(120);
     assert.match(await page.locator("#client-message-list").innerText(), /Please confirm the synthetic delivery window/);
     assert.match(await page.locator("#client-activity-list").innerText(), /Project Message Sent/);
+    await page.screenshot({ path: `${ARTIFACTS}/client-portal-communications-1440.png`, fullPage: true });
     await page.click('[data-view="client-deliverables"]');
     await page.waitForSelector("#client-deliverables-list .client-deliverable-card");
     assert.match(await page.locator("#client-deliverables-list").innerText(), /Client-ready outcome/);
