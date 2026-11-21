@@ -127,6 +127,41 @@ class StudioLifecycleTests(unittest.TestCase):
         actions = {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()}
         self.assertIn("deliverable.client_revision_requested", actions)
 
+    def test_project_operations_are_scoped_and_audited(self) -> None:
+        organization = self.post("/api/organizations", {"name": "Operations workspace"}, self.admin)
+        org_id = organization["id"]
+        for actor_id, role in (("client-1", "client"), ("professional-1", "professional"), ("reviewer-1", "reviewer")):
+            self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
+        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Operations engagement", "objective": "Test scoped collaboration"}, self.admin)
+        project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Operations project"}, self.admin)
+        package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Operations package", "acceptance_criteria": ["Messages are scoped"]}, self.admin)
+        invitation = self.post(f"/api/work-packages/{package['id']}/assignments", {"professional_id": "professional-1"}, self.admin)
+        self.post(f"/api/assignments/{invitation['id']}/accept", {}, self.professional)
+
+        document = self.post(
+            f"/api/projects/{project['id']}/documents",
+            {"name": "Approved brief", "description": "Synthetic project brief", "classification": "project", "storage_reference": "blob://private/project/brief-v1"},
+            self.admin,
+        )
+        self.assertNotIn("storage_reference", self.client.get(f"/api/projects/{project['id']}/documents", headers=self.client_user).json()[0])
+        self.assertEqual(document["classification"], "project")
+        sent = self.post(f"/api/projects/{project['id']}/messages", {"body": "Please confirm the delivery window.", "recipient_group": "internal"}, self.client_user)
+        self.assertEqual(sent["sender_id"], "client-1")
+        reply = self.post(f"/api/projects/{project['id']}/messages", {"body": "The synthetic window is confirmed.", "recipient_group": "client"}, self.admin)
+        self.assertEqual(reply["recipient_group"], "client")
+        self.assertEqual(len(self.client.get(f"/api/projects/{project['id']}/messages", headers=self.client_user).json()), 2)
+        self.assertEqual(self.client.post(f"/api/projects/{project['id']}/messages", json={"body": "Cannot contact a professional directly.", "recipient_group": "professional"}, headers=self.client_user).status_code, 403)
+        self.assertTrue(self.client.get("/api/notifications", headers=self.client_user).json())
+        activity = self.client.get(f"/api/projects/{project['id']}/activity", headers=self.client_user)
+        self.assertEqual(activity.status_code, 200)
+        self.assertTrue(any(event["action"] == "project.message.sent" for event in activity.json()))
+
+        other = self.post("/api/organizations", {"name": "Other operations workspace"}, self.admin)
+        self.post(f"/api/organizations/{other['id']}/members", {"actor_id": "client-2", "role": "client"}, self.admin)
+        self.assertEqual(self.client.get(f"/api/projects/{project['id']}/messages", headers=auth("client-2", "client")).status_code, 403)
+        self.assertEqual(self.client.get(f"/api/projects/{project['id']}/documents", headers=auth("client-2", "client")).status_code, 403)
+
     def test_unapproved_professional_and_cross_organization_access_are_denied(self) -> None:
         first = self.post("/api/organizations", {"name": "First synthetic org"}, self.admin)
         second = self.post("/api/organizations", {"name": "Second synthetic org"}, self.admin)

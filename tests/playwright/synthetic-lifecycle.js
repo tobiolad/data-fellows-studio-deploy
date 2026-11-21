@@ -71,6 +71,12 @@ async function main() {
       const grant = await api("admin-1", "admin", `/api/organizations/${organizationId}/members`, { method: "POST", body: JSON.stringify({ actor_id: actorId, role: memberRole }) });
       assert.ok([200, 201, 409].includes(grant.status));
     }
+    const opportunity = await api("admin-1", "admin", "/api/opportunities", { method: "POST", body: JSON.stringify({ title: "Synthetic delivery opportunity", summary: "A sanitized opportunity for the browser walkthrough.", specialization: "Automation", skills: ["Python"], compensation: null }) });
+    assert.strictEqual(opportunity.status, 201);
+    const interest = await api("professional-1", "professional", `/api/opportunities/${opportunity.body.id}/interests`, { method: "POST", body: JSON.stringify({ approach: "Synthetic verified delivery experience." }) });
+    assert.strictEqual(interest.status, 201);
+    const selection = await api("admin-1", "admin", `/api/opportunity-interests/${interest.body.id}/selected`, { method: "POST", body: "{}" });
+    assert.strictEqual(selection.status, 200);
     await fillAndClick({ "#invite-package": packageId, "#invite-professional": "professional-1" }, "#invite-professional-button");
     const assignmentResponse = await api("professional-1", "professional", "/api/professionals/professional-1/assignments");
     const assignment = assignmentResponse.body.find((item) => item.work_package_id === packageId);

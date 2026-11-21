@@ -47,6 +47,9 @@ class Store:
     deliverables: dict[str, dict] = field(default_factory=dict)
     reviews: dict[str, dict] = field(default_factory=dict)
     client_revision_requests: dict[str, dict] = field(default_factory=dict)
+    project_messages: dict[str, dict] = field(default_factory=dict)
+    project_documents: dict[str, dict] = field(default_factory=dict)
+    notifications: dict[str, dict] = field(default_factory=dict)
     opportunities: dict[str, dict] = field(default_factory=dict)
     opportunity_interests: dict[str, dict] = field(default_factory=dict)
     audit: list[dict] = field(default_factory=list)
@@ -77,6 +80,9 @@ class Store:
         self.deliverables.clear()
         self.reviews.clear()
         self.client_revision_requests.clear()
+        self.project_messages.clear()
+        self.project_documents.clear()
+        self.notifications.clear()
         self.opportunities.clear()
         self.opportunity_interests.clear()
         self.audit.clear()
@@ -195,6 +201,39 @@ def project_for_package(package_id: str) -> dict:
     return project
 
 
+def memory_project_access(actor: Identity, project_id: str) -> tuple[dict, str, set[str]]:
+    """Resolve project scope and caller membership without trusting client input."""
+    project = store.projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    organization_id = organization_for_engagement(project["engagement_id"])
+    roles = store.memberships.get((actor.actor_id, organization_id), set())
+    assigned = any(
+        item["professional_id"] == actor.actor_id
+        and item["status"] == "accepted"
+        and store.work_packages.get(item["work_package_id"], {}).get("project_id") == project_id
+        for item in store.assignments.values()
+    )
+    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
+        raise HTTPException(status_code=403, detail="Project access is not authorized")
+    return project, organization_id, roles | ({"professional"} if assigned else set())
+
+
+def memory_notification(project_id: str, recipient_group: str, kind: str, title: str, body: str) -> dict:
+    record = {
+        "id": str(uuid4()),
+        "project_id": project_id,
+        "recipient_group": recipient_group,
+        "kind": kind,
+        "title": title,
+        "body": body,
+        "read_at": None,
+        "created_at": now(),
+    }
+    store.notifications[record["id"]] = record
+    return record
+
+
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
 
@@ -252,6 +291,18 @@ class ReviewCreate(BaseModel):
 
 class ClientRevisionCreate(BaseModel):
     comment: str = Field(min_length=2, max_length=2000)
+
+
+class ProjectMessageCreate(BaseModel):
+    body: str = Field(min_length=2, max_length=4000)
+    recipient_group: Literal["client", "professional", "internal"]
+
+
+class ProjectDocumentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    classification: Literal["project", "deliverable", "support"] = "project"
+    storage_reference: str = Field(min_length=2, max_length=512)
 
 
 class OpportunityCreate(BaseModel):
@@ -619,6 +670,155 @@ def client_overview(request: Request) -> dict:
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
     return _memory_client_overview(actor)
+
+
+@app.get("/api/projects/{project_id}/messages")
+def list_project_messages(project_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            project_uuid = UUID(project_id)
+            return postgres_repository().list_project_messages(project_uuid, actor.actor_id, admin="admin" in actor.roles)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="project_id must be a UUID") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _project, _organization_id, roles = memory_project_access(actor, project_id)
+    internal = "admin" in actor.roles or roles.intersection({"owner", "reviewer"})
+    allowed_groups = {"internal"}
+    if "client" in roles:
+        allowed_groups.add("client")
+    if "professional" in roles:
+        allowed_groups.add("professional")
+    if not roles.intersection({"client", "professional"}):
+        allowed_groups = {"client", "professional", "internal"}
+    return [
+        item for item in sorted(store.project_messages.values(), key=lambda value: value["created_at"])
+        if item["project_id"] == project_id
+        and (internal or item["sender_id"] == actor.actor_id or item["recipient_group"] in allowed_groups)
+    ]
+
+
+@app.post("/api/projects/{project_id}/messages", status_code=status.HTTP_201_CREATED)
+def send_project_message(project_id: str, body: ProjectMessageCreate, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            project_uuid = UUID(project_id)
+            return postgres_repository().send_project_message(project_uuid, actor.actor_id, body.body, body.recipient_group, admin="admin" in actor.roles)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="project_id must be a UUID") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _project, organization_id, roles = memory_project_access(actor, project_id)
+    if "admin" not in actor.roles and roles.intersection({"client", "professional"}) and body.recipient_group != "internal":
+        raise HTTPException(status_code=403, detail="Clients and professionals may only message Data Fellows internally")
+    message = {
+        "id": str(uuid4()),
+        "project_id": project_id,
+        "sender_id": actor.actor_id,
+        "recipient_group": body.recipient_group,
+        "body": body.body,
+        "created_at": now(),
+    }
+    store.project_messages[message["id"]] = message
+    memory_notification(project_id, body.recipient_group, "project.message", "New project message", "A new message is available in the project workspace.")
+    audit_response(actor, "project_message", message["id"], "project.message.sent", organization_id,)
+    return message
+
+
+@app.get("/api/projects/{project_id}/documents")
+def list_project_documents(project_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            project_uuid = UUID(project_id)
+            return postgres_repository().list_project_documents(project_uuid, actor.actor_id, admin="admin" in actor.roles)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="project_id must be a UUID") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _project, _organization_id, roles = memory_project_access(actor, project_id)
+    return [
+        {key: value for key, value in item.items() if key != "storage_reference"}
+        for item in sorted(store.project_documents.values(), key=lambda value: value["created_at"])
+        if item["project_id"] == project_id and ("admin" in actor.roles or not roles.intersection({"client", "professional"}) or item["classification"] != "support")
+    ]
+
+
+@app.post("/api/projects/{project_id}/documents", status_code=status.HTTP_201_CREATED)
+def create_project_document(project_id: str, body: ProjectDocumentCreate, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            project_uuid = UUID(project_id)
+            return postgres_repository().create_project_document(project_uuid, actor.actor_id, body.model_dump(), admin="admin" in actor.roles)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="project_id must be a UUID") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _project, organization_id, roles = memory_project_access(actor, project_id)
+    if "admin" not in actor.roles and not roles.intersection({"owner"}):
+        raise HTTPException(status_code=403, detail="Only a Data Fellows owner may add project documents")
+    document = {"id": str(uuid4()), "project_id": project_id, **body.model_dump(), "created_by": actor.actor_id, "created_at": now()}
+    store.project_documents[document["id"]] = document
+    audit_response(actor, "project_document", document["id"], "project.document.added", organization_id)
+    return {key: value for key, value in document.items() if key != "storage_reference"}
+
+
+@app.get("/api/projects/{project_id}/activity")
+def project_activity(project_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            project_uuid = UUID(project_id)
+            return postgres_repository().project_activity(project_uuid, actor.actor_id, admin="admin" in actor.roles)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="project_id must be a UUID") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _project, _organization_id, roles = memory_project_access(actor, project_id)
+    related_ids = {project_id}
+    package_ids = {item["id"] for item in store.work_packages.values() if item["project_id"] == project_id}
+    related_ids.update(package_ids)
+    related_ids.update(item["id"] for item in store.assignments.values() if item["work_package_id"] in package_ids)
+    related_ids.update(item["id"] for item in store.deliverables.values() if item["work_package_id"] in package_ids)
+    related_ids.update(item["id"] for item in store.ai_runs.values() if item["work_package_id"] in package_ids)
+    related_ids.update(item["id"] for item in store.project_messages.values() if item["project_id"] == project_id)
+    related_ids.update(item["id"] for item in store.project_documents.values() if item["project_id"] == project_id)
+    events = [item for item in store.audit if item["resource_id"] in related_ids]
+    if "client" in roles or "professional" in roles:
+        events = [item for item in events if item["resource_type"] not in {"ai_run", "ai_artifact"}]
+    return list(reversed(events))
+
+
+@app.get("/api/notifications")
+def notifications(request: Request) -> list[dict]:
+    actor = identity(request)
+    if postgres_mode():
+        return postgres_repository().list_notifications(actor.actor_id, admin="admin" in actor.roles)
+    results = []
+    for item in store.notifications.values():
+        if not item["project_id"]:
+            continue
+        try:
+            _project, _organization_id, roles = memory_project_access(actor, item["project_id"])
+        except HTTPException:
+            continue
+        internal = "admin" in actor.roles or roles.intersection({"owner", "reviewer"})
+        if internal or item["recipient_group"] in roles:
+            results.append(item)
+    return sorted(results, key=lambda value: value["created_at"], reverse=True)
 
 
 @app.get("/api/engagements/{engagement_id}/projects")
@@ -1161,6 +1361,7 @@ def accept_deliverable(deliverable_id: str, request: Request) -> dict:
     deliverable["status"] = "accepted"
     deliverable["accepted_by"] = actor.actor_id
     deliverable["accepted_at"] = now()
+    memory_notification(project["id"], "internal", "deliverable.client_accepted", "Client acceptance recorded", "A client accepted an internally approved deliverable.")
     audit_response(actor, "deliverable", deliverable_id, "deliverable.client_accepted", org_id)
     return deliverable
 
@@ -1190,6 +1391,7 @@ def request_client_revision(deliverable_id: str, body: ClientRevisionCreate, req
     deliverable["status"] = "revision_requested"
     request_id = str(uuid4())
     store.client_revision_requests[request_id] = {"id": request_id, "deliverable_id": deliverable_id, "client_id": actor.actor_id, "comment": body.comment, "created_at": now()}
+    memory_notification(project["id"], "internal", "deliverable.client_revision_requested", "Client revision requested", "A client requested changes to an approved deliverable.")
     audit_response(actor, "deliverable", deliverable_id, "deliverable.client_revision_requested", org_id)
     return {"deliverable": deliverable, "revision_request": store.client_revision_requests[request_id]}
 

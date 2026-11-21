@@ -217,6 +217,152 @@ class PostgresRepository:
             }
             return {"organizations": organizations, "engagements": engagements, "projects": projects, "applications": applications, "professionals": applications, "opportunities": opportunities, "deliverables": deliverables, "ai_runs": ai_runs, "audit": audit, "metrics": metrics}
 
+    def _project_context(self, cursor: Any, project_id: UUID, actor: str, admin: bool = False) -> tuple[UUID, set[str]]:
+        cursor.execute(
+            "SELECT e.organization_id FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s",
+            (project_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise LookupError("Project not found")
+        organization_id = row[0]
+        if admin:
+            return organization_id, {"admin"}
+        cursor.execute(
+            "SELECT role FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL",
+            (organization_id, actor),
+        )
+        roles = {item[0] for item in cursor.fetchall()}
+        cursor.execute(
+            """SELECT 1 FROM assignments a JOIN work_packages w ON w.id = a.work_package_id
+               WHERE w.project_id = %s AND a.professional_id = %s AND a.status = 'accepted'
+                 AND (a.expires_at IS NULL OR a.expires_at > now())""",
+            (project_id, actor),
+        )
+        if cursor.fetchone() is not None:
+            roles.add("professional")
+        if not roles.intersection({"owner", "reviewer", "client", "professional"}):
+            raise PermissionError("Project access is not authorized")
+        return organization_id, roles
+
+    def list_project_messages(self, project_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            _organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            cursor.execute(
+                "SELECT id, project_id, sender_id, recipient_group, body, created_at FROM project_messages WHERE project_id = %s ORDER BY created_at",
+                (project_id,),
+            )
+            internal = admin or bool(roles.intersection({"owner", "reviewer"}))
+            allowed_groups = {"internal"}
+            if "client" in roles:
+                allowed_groups.add("client")
+            if "professional" in roles:
+                allowed_groups.add("professional")
+            if not roles.intersection({"client", "professional"}):
+                allowed_groups = {"client", "professional", "internal"}
+            return [
+                {"id": str(row[0]), "project_id": str(row[1]), "sender_id": row[2], "recipient_group": row[3], "body": row[4], "created_at": row[5]}
+                for row in cursor.fetchall()
+                if internal or row[2] == actor or row[3] in allowed_groups
+            ]
+
+    def send_project_message(self, project_id: UUID, actor: str, body: str, recipient_group: str, admin: bool = False) -> dict[str, Any]:
+        message_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            if not admin and roles.intersection({"client", "professional"}) and recipient_group != "internal":
+                raise PermissionError("Clients and professionals may only message Data Fellows internally")
+            cursor.execute(
+                "INSERT INTO project_messages(id, project_id, sender_id, recipient_group, body) VALUES (%s, %s, %s, %s, %s)",
+                (message_id, project_id, actor, recipient_group, body),
+            )
+            notification_id = uuid4()
+            cursor.execute(
+                "INSERT INTO notifications(id, project_id, recipient_group, kind, title, body) VALUES (%s, %s, %s, 'project.message', 'New project message', 'A new message is available in the project workspace.')",
+                (notification_id, project_id, recipient_group),
+            )
+            self._audit(cursor, organization_id, actor, "project.message.sent", "project_message", str(message_id))
+            return {"id": str(message_id), "project_id": str(project_id), "sender_id": actor, "recipient_group": recipient_group, "body": body}
+
+    def list_project_documents(self, project_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            _organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            cursor.execute(
+                "SELECT id, project_id, name, description, classification, storage_reference, created_by, created_at FROM project_documents WHERE project_id = %s ORDER BY created_at",
+                (project_id,),
+            )
+            hide_reference = not (admin or roles.intersection({"owner", "reviewer"}))
+            results = []
+            for row in cursor.fetchall():
+                if row[4] == "support" and roles.intersection({"client", "professional"}):
+                    continue
+                record = {"id": str(row[0]), "project_id": str(row[1]), "name": row[2], "description": row[3], "classification": row[4], "created_by": row[6], "created_at": row[7]}
+                if not hide_reference:
+                    record["storage_reference"] = row[5]
+                results.append(record)
+            return results
+
+    def create_project_document(self, project_id: UUID, actor: str, document: dict[str, Any], admin: bool = False) -> dict[str, Any]:
+        document_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            if not admin and "owner" not in roles:
+                raise PermissionError("Only a Data Fellows owner may add project documents")
+            cursor.execute(
+                "INSERT INTO project_documents(id, project_id, name, description, classification, storage_reference, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (document_id, project_id, document["name"], document.get("description", ""), document["classification"], document["storage_reference"], actor),
+            )
+            self._audit(cursor, organization_id, actor, "project.document.added", "project_document", str(document_id))
+            return {"id": str(document_id), "project_id": str(project_id), "name": document["name"], "description": document.get("description", ""), "classification": document["classification"], "created_by": actor}
+
+    def project_activity(self, project_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            cursor.execute("SELECT id FROM work_packages WHERE project_id = %s", (project_id,))
+            package_ids = [str(row[0]) for row in cursor.fetchall()]
+            resource_ids = [str(project_id), *package_ids]
+            if package_ids:
+                cursor.execute("SELECT id FROM assignments WHERE work_package_id = ANY(%s::uuid[])", (package_ids,))
+                resource_ids.extend(str(row[0]) for row in cursor.fetchall())
+                cursor.execute("SELECT id FROM deliverables WHERE work_package_id = ANY(%s::uuid[])", (package_ids,))
+                resource_ids.extend(str(row[0]) for row in cursor.fetchall())
+                cursor.execute("SELECT id FROM ai_runs WHERE work_package_id = ANY(%s::uuid[])", (package_ids,))
+                resource_ids.extend(str(row[0]) for row in cursor.fetchall())
+            cursor.execute("SELECT id FROM project_messages WHERE project_id = %s UNION ALL SELECT id FROM project_documents WHERE project_id = %s", (project_id, project_id))
+            resource_ids.extend(str(row[0]) for row in cursor.fetchall())
+            cursor.execute(
+                "SELECT organization_id, actor_id, action, resource_type, resource_id, metadata, created_at FROM audit_events WHERE organization_id = %s AND resource_id = ANY(%s::text[]) ORDER BY created_at DESC",
+                (organization_id, resource_ids),
+            )
+            return [
+                {"organization_id": str(row[0]), "actor_id": row[1], "action": row[2], "resource_type": row[3], "resource_id": row[4], "metadata": row[5], "created_at": row[6]}
+                for row in cursor.fetchall()
+                if admin or not roles.intersection({"client", "professional"}) or row[3] not in {"ai_run", "ai_artifact"}
+            ]
+
+    def list_notifications(self, actor: str, admin: bool = False) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if admin:
+                cursor.execute("SELECT id, project_id, recipient_group, kind, title, body, read_at, created_at FROM notifications ORDER BY created_at DESC")
+            else:
+                cursor.execute(
+                    """SELECT DISTINCT n.id, n.project_id, n.recipient_group, n.kind, n.title, n.body, n.read_at, n.created_at
+                       FROM notifications n JOIN projects p ON p.id = n.project_id
+                       JOIN engagements e ON e.id = p.engagement_id
+                       JOIN memberships m ON m.organization_id = e.organization_id
+                       WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                         AND (n.recipient_group = m.role OR (n.recipient_group = 'internal' AND m.role IN ('owner', 'reviewer')))
+                       ORDER BY n.created_at DESC""",
+                    (actor,),
+                )
+            return [{"id": str(row[0]), "project_id": None if row[1] is None else str(row[1]), "recipient_group": row[2], "kind": row[3], "title": row[4], "body": row[5], "read_at": row[6], "created_at": row[7]} for row in cursor.fetchall()]
+
     @staticmethod
     def _count_active_assignments(cursor: Any) -> int:
         cursor.execute("SELECT COUNT(*) FROM assignments WHERE status = 'accepted' AND (expires_at IS NULL OR expires_at > now())")
@@ -859,6 +1005,7 @@ class PostgresRepository:
             if status != "approved":
                 raise ValueError("Only an internally approved deliverable can be accepted")
             cursor.execute("UPDATE deliverables SET status = 'accepted' WHERE id = %s", (deliverable_id,))
+            cursor.execute("INSERT INTO notifications(id, project_id, recipient_group, kind, title, body) SELECT %s, p.id, 'internal', 'deliverable.client_accepted', 'Client acceptance recorded', 'A client accepted an internally approved deliverable.' FROM projects p WHERE p.id = (SELECT project_id FROM work_packages WHERE id = %s)", (uuid4(), package_id))
             self._audit(cursor, organization_id, client_id, "deliverable.client_accepted", "deliverable", str(deliverable_id))
             return {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "accepted", "accepted_by": client_id}
 
@@ -884,6 +1031,7 @@ class PostgresRepository:
             request_id = uuid4()
             cursor.execute("UPDATE deliverables SET status = 'revision_requested' WHERE id = %s", (deliverable_id,))
             cursor.execute("INSERT INTO client_revision_requests(id, deliverable_id, client_id, comment) VALUES (%s, %s, %s, %s)", (request_id, deliverable_id, client_id, comment))
+            cursor.execute("INSERT INTO notifications(id, project_id, recipient_group, kind, title, body) SELECT %s, p.id, 'internal', 'deliverable.client_revision_requested', 'Client revision requested', 'A client requested changes to an approved deliverable.' FROM projects p WHERE p.id = (SELECT project_id FROM work_packages WHERE id = %s)", (uuid4(), package_id))
             self._audit(cursor, organization_id, client_id, "deliverable.client_revision_requested", "deliverable", str(deliverable_id), {"comment": comment})
             return {"deliverable": {"id": str(deliverable_id), "work_package_id": str(package_id), "version": version, "title": title, "content": content, "submitted_by": submitted_by, "status": "revision_requested"}, "revision_request": {"id": str(request_id), "deliverable_id": str(deliverable_id), "client_id": client_id, "comment": comment}}
 

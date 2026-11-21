@@ -162,6 +162,30 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(visible_deliverables.status_code, 200)
         self.assertEqual(len(visible_deliverables.json()), 1)
+        document = self.client.post(
+            f"/api/projects/{project.json()['id']}/documents",
+            headers=self.admin,
+            json={"name": "Persistent brief", "description": "Synthetic project document", "classification": "project", "storage_reference": "blob://private/persistent/brief"},
+        )
+        self.assertEqual(document.status_code, 201)
+        client_documents = self.client.get(f"/api/projects/{project.json()['id']}/documents", headers=auth("postgres-client-user", "client"))
+        self.assertEqual(client_documents.status_code, 200)
+        self.assertNotIn("storage_reference", client_documents.json()[0])
+        client_message = self.client.post(
+            f"/api/projects/{project.json()['id']}/messages",
+            headers=auth("postgres-client-user", "client"),
+            json={"body": "Please confirm the synthetic delivery window.", "recipient_group": "internal"},
+        )
+        self.assertEqual(client_message.status_code, 201)
+        internal_message = self.client.post(
+            f"/api/projects/{project.json()['id']}/messages",
+            headers=self.admin,
+            json={"body": "The synthetic delivery window is confirmed.", "recipient_group": "client"},
+        )
+        self.assertEqual(internal_message.status_code, 201)
+        self.assertEqual(len(self.client.get(f"/api/projects/{project.json()['id']}/messages", headers=auth("postgres-client-user", "client")).json()), 2)
+        self.assertTrue(self.client.get(f"/api/projects/{project.json()['id']}/activity", headers=auth("postgres-client-user", "client")).json())
+        self.assertTrue(self.client.get("/api/notifications", headers=auth("postgres-client-user", "client")).json())
         completed = self.client.post(f"/api/projects/{project.json()['id']}/complete", headers=self.admin)
         self.assertEqual(completed.status_code, 200)
 

@@ -5,6 +5,7 @@ const identityStatus = document.querySelector("#identity-status");
 let assignments = [];
 let opportunities = [];
 let clientData = null;
+let clientOperations = { projectId: "", messages: [], activity: [] };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -19,7 +20,7 @@ function showMessage(message, kind = "info") { identityStatus.textContent = mess
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char])); }
 function dateLabel(value) { if (!value) return "No deadline recorded"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "Date unavailable" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
 function statusClass(status) { return String(status || "neutral").replaceAll("_", "-").replaceAll(" ", "-"); }
-function statusLabel(status) { return String(status || "Not started").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function statusLabel(status) { return String(status || "Not started").replaceAll("_", " ").replaceAll(".", " ").replaceAll("-", " ").replace(/\s+/g, " ").trim().replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 function emptyState(title, text) { return `<div class="empty-panel inline-empty"><span class="empty-icon">◇</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(text)}</p></div>`; }
 
 function legacyNavigate(viewName) {
@@ -91,6 +92,7 @@ $("#refresh").addEventListener("click", refresh); $("#load-assignments").addEven
 $("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable);
 $("#opportunity-filter").addEventListener("change", renderOpportunities); $("#opportunity-search").addEventListener("input", renderOpportunities);
 $("#client-refresh").addEventListener("click", loadClientOverview); $("#client-project-search").addEventListener("input", renderClientProjects); $("#client-project-status").addEventListener("change", renderClientProjects);
+$("#client-message-project").addEventListener("change", (event) => loadClientOperations(event.target.value)); $("#client-message-form").addEventListener("submit", sendClientMessage);
 $("#create-organization").addEventListener("click", createOrganization); $("#create-engagement").addEventListener("click", createEngagement); $("#create-project").addEventListener("click", createProject); $("#create-package").addEventListener("click", createWorkPackage); $("#invite-professional-button").addEventListener("click", inviteProfessional); $("#accept-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "accept")); $("#decline-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "decline")); $("#load-admissions").addEventListener("click", loadAdmissions); $("#approve-professional").addEventListener("click", () => decideProfessional("approved")); $("#reject-professional").addEventListener("click", () => decideProfessional("rejected")); $("#complete-project").addEventListener("click", completeProject);
 syncRole(); navigate(location.hash.slice(1) || "overview"); refresh();
 
@@ -206,7 +208,43 @@ function renderClientDeliverables() {
   $$(".client-revision-button").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); if (form) form.hidden = false; }));
   $$(".submit-client-revision").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); requestClientRevision(button.dataset.deliverableId, form?.querySelector("textarea")?.value || ""); }));
 }
-async function loadClientOverview() { try { clientData = await request("/api/client/overview"); renderClientOverview(); renderClientProjects(); renderClientDeliverables(); } catch (error) { showMessage(error.message, "error"); ["#client-project-list", "#client-projects-list", "#client-deliverables-list"].forEach((selector) => { if ($(selector)) $(selector).innerHTML = emptyState("Client workspace unavailable", error.message); }); } }
+function renderClientOperations() {
+  const projects = clientData?.projects || [];
+  const select = $("#client-message-project");
+  if (!select) return;
+  const selected = projects.some((item) => item.id === clientOperations.projectId) ? clientOperations.projectId : projects[0]?.id || "";
+  select.innerHTML = projects.length ? projects.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("") : `<option value="">No authorized projects</option>`;
+  select.value = selected;
+  $("#client-message-list").innerHTML = clientOperations.messages.length ? clientOperations.messages.map((item) => `<article class="message-row"><div class="message-meta"><strong>${escapeHtml(item.sender_id === actor.value.trim() ? "You" : "Data Fellows")}</strong><time>${escapeHtml(dateLabel(item.created_at))}</time></div><p>${escapeHtml(item.body)}</p></article>`).join("") : emptyState("No messages yet", "Start a scoped conversation with your Data Fellows delivery team.");
+  $("#client-activity-list").innerHTML = clientOperations.activity.length ? clientOperations.activity.slice(0, 8).map((item) => `<div class="activity-row"><span class="activity-dot" aria-hidden="true"></span><div><strong>${escapeHtml(statusLabel(item.action))}</strong><small>${escapeHtml(dateLabel(item.created_at))}</small></div></div>`).join("") : `<p class="muted">No visible activity has been recorded for this project.</p>`;
+}
+async function loadClientOperations(projectId = "") {
+  const projects = clientData?.projects || [];
+  const selected = projectId || (projects.some((item) => item.id === clientOperations.projectId) ? clientOperations.projectId : projects[0]?.id) || "";
+  clientOperations = { projectId: selected, messages: [], activity: [] };
+  if (!selected) return renderClientOperations();
+  try {
+    const [messages, activity] = await Promise.all([
+      request(`/api/projects/${encodeURIComponent(selected)}/messages`),
+      request(`/api/projects/${encodeURIComponent(selected)}/activity`),
+    ]);
+    clientOperations = { projectId: selected, messages, activity };
+  } catch (error) { showMessage(error.message, "error"); }
+  renderClientOperations();
+}
+async function sendClientMessage(event) {
+  event.preventDefault();
+  const projectId = $("#client-message-project")?.value;
+  const body = $("#client-message-body")?.value.trim();
+  if (!projectId || !body) return showMessage("Choose a project and enter a message first.", "error");
+  try {
+    await request(`/api/projects/${encodeURIComponent(projectId)}/messages`, { method: "POST", body: JSON.stringify({ body, recipient_group: "internal" }) });
+    $("#client-message-body").value = "";
+    showMessage("Message sent to Data Fellows.", "success");
+    await loadClientOperations(projectId);
+  } catch (error) { showMessage(error.message, "error"); }
+}
+async function loadClientOverview() { try { clientData = await request("/api/client/overview"); renderClientOverview(); renderClientProjects(); renderClientDeliverables(); await loadClientOperations(); } catch (error) { showMessage(error.message, "error"); ["#client-project-list", "#client-projects-list", "#client-deliverables-list"].forEach((selector) => { if ($(selector)) $(selector).innerHTML = emptyState("Client workspace unavailable", error.message); }); } }
 async function acceptClientDeliverable(id) { try { await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" }); showMessage("Your acceptance was recorded.", "success"); await loadClientOverview(); } catch (error) { showMessage(error.message, "error"); } }
 async function requestClientRevision(id, comment) { if (!comment.trim()) return showMessage("Add a revision request before sending.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/client-revision`, { method: "POST", body: JSON.stringify({ comment }) }); showMessage("Revision request sent to Data Fellows.", "success"); await loadClientOverview(); } catch (error) { showMessage(error.message, "error"); } }
 function navigate(viewName) {
@@ -214,7 +252,7 @@ function navigate(viewName) {
   $$(".view").forEach((item) => item.classList.toggle("active-view", item.id === `${view}-view`));
   $$('[data-view]').forEach((link) => link.classList.toggle("active", link.dataset.view === view));
   if (view.startsWith("admin-") && role.value === "admin") { loadAdminOverview(); }
-  if (view.startsWith("client-") && role.value === "client") { if (!clientData) loadClientOverview(); else { renderClientOverview(); renderClientProjects(); renderClientDeliverables(); } }
+  if (view.startsWith("client-") && role.value === "client") { if (!clientData) loadClientOverview(); else { renderClientOverview(); renderClientProjects(); renderClientDeliverables(); if (view === "client-communications") loadClientOperations(); } }
   if (view === "opportunities") loadOpportunities();
   if (view === "deliverables") loadSelectedDeliverables();
   if (view === "reviews") renderReviews();

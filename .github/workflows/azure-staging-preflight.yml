@@ -1,0 +1,117 @@
+name: Azure staging read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-staging-preflight
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    name: Inventory approved staging boundary
+    runs-on: ubuntu-latest
+    environment: azure-inventory
+    timeout-minutes: 10
+    steps:
+      - name: Sign in with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+
+      - name: Read-only resource inventory
+        shell: bash
+        env:
+          EXPECTED_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP: rg-bizpilot-staging
+          VNET_NAME: vnet-bizpilot-staging
+          CONTAINER_SUBNET: snet-containerapps
+          POSTGRES_SUBNET: snet-postgres
+          PRIVATE_ENDPOINT_SUBNET: snet-private-endpoints
+          CONTAINER_ENVIRONMENT: cae-bizpilot-staging
+          REGISTRY_NAME: acrbizpilotstaging
+        run: |
+          set -euo pipefail
+          summary="$GITHUB_STEP_SUMMARY"
+          echo "## Azure staging preflight" >> "$summary"
+          echo "Read-only checks; no resource changes are performed." >> "$summary"
+          echo "" >> "$summary"
+          pass() { echo "- ✅ **PASS** — $1" | tee -a "$summary"; }
+          review() { echo "- ⚠️ **REVIEW** — $1" | tee -a "$summary"; }
+          fail() { echo "- ❌ **FAIL** — $1" | tee -a "$summary"; exit 1; }
+
+          actual_subscription="$(az account show --query id -o tsv 2>/dev/null || true)"
+          if [[ -z "$actual_subscription" ]]; then
+            fail "Azure CLI could not read the selected subscription; verify the federated identity and Reader scope."
+          elif [[ "$actual_subscription" == "$EXPECTED_SUBSCRIPTION" ]]; then
+            pass "Authenticated to the expected subscription ($actual_subscription)."
+          else
+            fail "Authenticated subscription does not match the configured target."
+          fi
+
+          if az group show --name "$RESOURCE_GROUP" --query "name" -o tsv >/dev/null; then
+            pass "Resource group $RESOURCE_GROUP exists."
+          else
+            fail "Resource group $RESOURCE_GROUP is unavailable to this identity."
+          fi
+
+          if az network vnet show --resource-group "$RESOURCE_GROUP" --name "$VNET_NAME" --query "{name:name,addressSpace:addressSpace.addressPrefixes}" -o json; then
+            pass "VNet $VNET_NAME is readable."
+          else
+            fail "VNet $VNET_NAME is unavailable or not readable."
+          fi
+
+          check_subnet() {
+            local name="$1" expected_delegation="$2"
+            local payload
+            if ! payload="$(az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$name" -o json 2>/dev/null)"; then
+              fail "Subnet $name is unavailable or not readable."
+            fi
+            local delegation policies outbound
+            delegation="$(jq -r '[.delegations[]?.serviceName] | join(",")' <<<"$payload")"
+            policies="$(jq -r '.privateEndpointNetworkPolicies // "null"' <<<"$payload")"
+            outbound="$(jq -r '.defaultOutboundAccess // "unknown"' <<<"$payload")"
+            echo "- ${name}: delegation=${delegation:-none}; privateEndpointNetworkPolicies=${policies}; defaultOutboundAccess=${outbound}" | tee -a "$summary"
+            if [[ "$name" == "$PRIVATE_ENDPOINT_SUBNET" ]]; then
+              case "$policies" in
+                Disabled|Enabled|NetworkSecurityGroupEnabled|RouteTableEnabled) review "Private endpoint subnet policies are $policies; this is a supported setting, but private endpoint and NSG behavior still requires a live connectivity check." ;;
+                *) fail "Private endpoint subnet has an unknown network policy value ($policies)." ;;
+              esac
+            elif [[ "$delegation" == *"$expected_delegation"* ]]; then
+              pass "Subnet $name has the expected $expected_delegation delegation."
+            else
+              review "Subnet $name does not expose the expected delegation ($expected_delegation); confirm the live delegation before provisioning dependencies."
+            fi
+            if [[ "$outbound" == "false" ]]; then
+              review "$name has defaultOutboundAccess=false. This inventory does not prove image-pull or runtime egress; run an approval-controlled connectivity probe before deployment."
+            fi
+          }
+
+          check_subnet "$CONTAINER_SUBNET" "Microsoft.App/environments"
+          check_subnet "$POSTGRES_SUBNET" "Microsoft.DBforPostgreSQL/flexibleServers"
+          check_subnet "$PRIVATE_ENDPOINT_SUBNET" ""
+
+          if env_json="$(az containerapp env show --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_ENVIRONMENT" -o json 2>/dev/null)"; then
+            echo "- Container Apps environment: $(jq -r '.name' <<<"$env_json") state=$(jq -r '.provisioningState // \"unknown\"' <<<"$env_json") publicNetworkAccess=$(jq -r '.publicNetworkAccess // \"unknown\"' <<<"$env_json")" | tee -a "$summary"
+            [[ "$(jq -r '.provisioningState // ""' <<<"$env_json")" == "Succeeded" ]] && pass "Container Apps environment is provisioned." || review "Container Apps environment is not in Succeeded state."
+            review "Environment/control-plane settings do not prove that a workload can pull from ACR or reach private dependencies."
+          else
+            fail "Container Apps environment $CONTAINER_ENVIRONMENT is unavailable or not readable."
+          fi
+
+          if acr_json="$(az acr show --resource-group "$RESOURCE_GROUP" --name "$REGISTRY_NAME" -o json 2>/dev/null)"; then
+            echo "- ACR: loginServer=$(jq -r '.loginServer' <<<"$acr_json") sku=$(jq -r '.sku.name' <<<"$acr_json") adminEnabled=$(jq -r '.adminUserEnabled // false' <<<"$acr_json") publicNetworkAccess=$(jq -r '.publicNetworkAccess // "unknown"' <<<"$acr_json")" | tee -a "$summary"
+            [[ "$(jq -r '.adminUserEnabled // false' <<<"$acr_json")" == "false" ]] && pass "ACR admin authentication is disabled." || fail "ACR admin authentication is enabled; use managed identity and disable admin credentials."
+          else
+            fail "ACR $REGISTRY_NAME is unavailable or not readable."
+          fi
+
+          review "Subscription-level billing, sponsorship balance, expiry and provider-side quotas are not proven by Reader access to this resource group."
+          review "PostgreSQL, private Blob, Key Vault, private DNS, queue, managed identities, monitoring and application revisions are inventory gaps until their approved resources exist."
