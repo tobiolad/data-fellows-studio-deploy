@@ -227,3 +227,17 @@ html, body { overflow-x: clip; }
 .activity-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--df-blue); box-shadow: 0 0 0 4px #eaf1ff; }
 @media (max-width: 1050px) { .client-dashboard-grid { grid-template-columns:1fr; } }
 @media (max-width: 680px) { .client-dashboard-grid, .client-unavailable-grid { grid-template-columns:1fr; } .client-project-heading { flex-direction:column; } .client-project-card .card-footer { align-items:flex-start; flex-direction:column; } .client-project-card .card-footer button { width:100%; } .client-action-row { width:100%; justify-content:stretch; } .client-action-row button { flex:1; } .client-communication-panel .panel-heading { align-items: stretch; flex-direction: column; } .compact-field { min-width: 0; width: 100%; } .message-composer .primary-button { width: 100%; } .client-nav { flex-wrap: wrap; overflow-x: visible; } .client-nav a { flex: 1 0 calc(33.33% - 6px); justify-content: center; } .client-nav a:nth-child(n+6) { display: flex; } }
+
+/* Profile workspace: structured draft editing without implying admission. */
+.profile-form-panel { min-width: 0; }
+.profile-form { display: grid; gap: 16px; }
+.profile-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.profile-form label { display: grid; gap: 7px; color: var(--df-ink); font-size: 12px; font-weight: 700; }
+.profile-form input, .profile-form textarea { width: 100%; border: 1px solid var(--df-line); border-radius: var(--df-radius-sm); padding: 10px 11px; color: var(--df-ink); background: var(--df-surface); font: inherit; font-size: 13px; }
+.profile-form textarea { resize: vertical; min-height: 78px; line-height: 1.45; }
+.profile-form input:focus-visible, .profile-form textarea:focus-visible { outline: 3px solid #8bb4ff; outline-offset: 2px; border-color: var(--df-blue); }
+.profile-form small { font-weight: 500; }
+.form-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.profile-form-panel .panel-heading { margin-bottom: 4px; }
+.profile-form-panel .panel-heading .muted { font-size: 11px; }
+@media (max-width: 680px) { .profile-form .form-grid { grid-template-columns: 1fr; } .form-actions .primary-button { width: 100%; } .profile-form-panel .panel-heading { align-items: flex-start; flex-direction: column; gap: 5px; } }

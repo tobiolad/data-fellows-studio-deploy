@@ -13,3 +13,6 @@ Production rules:
 - Add immutable successor columns/rows for domain history rather than overwriting approved artifacts.
 - Never edit an applied migration; add a new file so checksum verification and rollback review remain meaningful.
 - Set `STUDIO_TEST_DATABASE_URL` only in a protected synthetic test environment.
+## 007 professional profiles
+
+`007_professional_profiles.sql` adds a profile draft keyed to an existing admission. JSON arrays hold bounded, structured education, experience and portfolio references; `version` and `updated_at` support optimistic edits. The admission row remains the source of vetting status and is never changed by profile writes. Apply migrations lexically with the existing checksum-verified runner.

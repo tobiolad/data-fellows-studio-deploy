@@ -38,6 +38,7 @@ class Store:
     memberships: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     approved_professionals: set[str] = field(default_factory=set)
     professional_admissions: dict[str, dict] = field(default_factory=dict)
+    professional_profiles: dict[str, dict] = field(default_factory=dict)
     engagements: dict[str, dict] = field(default_factory=dict)
     projects: dict[str, dict] = field(default_factory=dict)
     work_packages: dict[str, dict] = field(default_factory=dict)
@@ -71,6 +72,7 @@ class Store:
         self.memberships.clear()
         self.approved_professionals.clear()
         self.professional_admissions.clear()
+        self.professional_profiles.clear()
         self.engagements.clear()
         self.projects.clear()
         self.work_packages.clear()
@@ -98,7 +100,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8100",
     ],
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -318,6 +320,19 @@ class OpportunityInterestCreate(BaseModel):
     approach: str = Field(min_length=2, max_length=4000)
 
 
+class ProfessionalProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=160)
+    headline: str = Field(default="", max_length=240)
+    bio: str = Field(default="", max_length=4000)
+    skills: list[str] = Field(default_factory=list, max_length=30)
+    specializations: list[str] = Field(default_factory=list, max_length=20)
+    education: list[dict[str, str]] = Field(default_factory=list, max_length=10)
+    experience: list[dict[str, str]] = Field(default_factory=list, max_length=15)
+    portfolio: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+    availability: str = Field(default="", max_length=120)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
 def audit_response(actor: Identity, resource_type: str, resource_id: str, action: str, organization_id: str | None = None) -> None:
     store.event(actor, action, resource_type, resource_id, organization_id=organization_id)
 
@@ -474,6 +489,64 @@ def get_professional_application(professional_id: str, request: Request) -> dict
     if not record:
         raise HTTPException(status_code=404, detail="Professional application not found")
     return record
+
+
+def _profile_access(actor: Identity, professional_id: str) -> None:
+    """Profiles are private to the professional and authorized admission staff."""
+    if actor.actor_id == professional_id and "professional" in actor.roles:
+        return
+    if "admin" in actor.roles:
+        return
+    raise HTTPException(status_code=403, detail="Professional profile access is not authorized")
+
+
+@app.get("/api/professionals/{professional_id}/profile")
+def get_professional_profile(professional_id: str, request: Request) -> dict:
+    actor = identity(request)
+    _profile_access(actor, professional_id)
+    if postgres_mode():
+        try:
+            record = postgres_repository().get_professional_profile(professional_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    else:
+        if professional_id not in store.professional_admissions:
+            raise HTTPException(status_code=404, detail="Professional application not found")
+        record = store.professional_profiles.get(professional_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Professional profile has not been started")
+    return record
+
+
+@app.put("/api/professionals/{professional_id}/profile")
+def update_professional_profile(professional_id: str, body: ProfessionalProfileUpdate, request: Request) -> dict:
+    actor = identity(request)
+    _profile_access(actor, professional_id)
+    payload = body.model_dump(exclude_none=True)
+    expected_version = payload.pop("expected_version", None)
+    if postgres_mode():
+        try:
+            return postgres_repository().upsert_professional_profile(professional_id, payload, actor.actor_id, expected_version)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if professional_id not in store.professional_admissions:
+        raise HTTPException(status_code=409, detail="Submit a professional application before editing a profile")
+    existing = store.professional_profiles.get(professional_id)
+    current_version = existing.get("version", 0) if existing else 0
+    if expected_version is not None and expected_version != current_version:
+        raise HTTPException(status_code=409, detail="Profile changed since it was loaded; refresh before saving")
+    profile = {
+        **payload,
+        "professional_id": professional_id,
+        "version": current_version + 1,
+        "updated_at": now(),
+        "application_status": store.professional_admissions[professional_id]["status"],
+    }
+    store.professional_profiles[professional_id] = profile
+    audit_response(actor, "professional_profile", professional_id, "professional_profile.updated")
+    return profile
 
 
 @app.get("/api/professionals/admissions")

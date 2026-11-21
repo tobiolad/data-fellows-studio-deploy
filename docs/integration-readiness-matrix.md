@@ -8,9 +8,10 @@ live Azure deployment or Entra sign-in has been executed.
 | --- | --- | --- |
 | Admin Portal | Implemented and tested | Mission Control Playwright smoke and API authorization tests pass. |
 | Professional Portal | Implemented and tested | Assignment, opportunity, deliverable and review flows pass synthetic walkthrough. |
+| Professional profile and onboarding | Implemented in focused reuse increment | `professional_profiles` migration, own/admin API, version checks, audit event, and synthetic Playwright evidence. Add admin evidence review and private scanner-backed uploads before real applications. |
 | Client Portal | Implemented and tested | Approved-only deliverables, revision/acceptance, mobile screenshot and project messaging pass. |
 | AI orchestration | Implemented and tested (synthetic) | Deterministic bounded planner and independent approval pass; live provider disabled. |
-| Database | Implemented and tested | Versioned migrations 001-006, transaction repository and PostgreSQL integration pass. |
+| Database | Implemented and tested | Versioned migrations 001-007, transaction repository and PostgreSQL integration pass when the configured test database is available. |
 | Authorization | Implemented and tested locally | Cross-organization, revoked-access and self-approval negatives pass; Entra validation remains external. |
 | BizPilot integration | Partially implemented | Handoff contracts exist in BizPilot; live Studio receiver and service identity are not connected. |
 | HubSpot | Not implemented | Keep CRM authoritative; add an approved adapter only when credentials and scope are approved. |

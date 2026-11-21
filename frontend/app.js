@@ -6,6 +6,7 @@ let assignments = [];
 let opportunities = [];
 let clientData = null;
 let clientOperations = { projectId: "", messages: [], activity: [] };
+let professionalProfile = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -70,6 +71,50 @@ async function reviewDeliverable() { const id = $("#review-deliverable-id").valu
 async function submitApplication() { try { const result = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`, { method: "POST", body: "{}" }); showMessage("Professional application submitted for review.", "success"); updateApplication(result); } catch (error) { showMessage(error.message, "error"); } }
 function updateApplication(record) { if (!record) return; $("#application-status-text").textContent = `Your application is ${statusLabel(record.status).toLowerCase()}. Data Fellows will contact you about the next step.`; $("#application-status-badge").textContent = statusLabel(record.status); $("#application-status-badge").className = `status-badge ${record.status === "approved" ? "success" : record.status === "rejected" ? "warning" : "neutral"}`; }
 async function loadApplication() { try { updateApplication(await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/application`)); } catch (error) { if (!error.message.includes("404")) showMessage(error.message, "error"); } }
+function profileEntries(value, keys) {
+  return value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => { const parts = line.split("|").map((item) => item.trim()); return Object.fromEntries(keys.map((key, index) => [key, parts[index] || ""])); });
+}
+function profileCompleteness(profile) {
+  if (!profile) return "Not started";
+  const checks = [profile.display_name, profile.headline, profile.bio, profile.skills?.length, profile.specializations?.length, profile.experience?.length, profile.education?.length, profile.availability];
+  return `${Math.round((checks.filter(Boolean).length / checks.length) * 100)}% complete`;
+}
+function setProfileForm(profile) {
+  if (!profile) return;
+  $("#profile-display-name").value = profile.display_name || "";
+  $("#profile-headline").value = profile.headline || "";
+  $("#profile-skills").value = (profile.skills || []).join(", ");
+  $("#profile-specializations").value = (profile.specializations || []).join(", ");
+  $("#profile-availability").value = profile.availability || "";
+  $("#profile-bio").value = profile.bio || "";
+  $("#profile-portfolio").value = (profile.portfolio || []).map((item) => [item.title, item.url].filter(Boolean).join(" | ")).join("\n");
+  $("#profile-experience").value = (profile.experience || []).map((item) => [item.title, item.company, item.start, item.end].filter(Boolean).join(" | ")).join("\n");
+  $("#profile-education").value = (profile.education || []).map((item) => [item.school, item.degree, item.field].filter(Boolean).join(" | ")).join("\n");
+  $("#profile-completeness").textContent = profileCompleteness(profile);
+  $("#profile-updated").textContent = profile.updated_at ? dateLabel(profile.updated_at) : "Not saved";
+  $("#profile-vetting-status").textContent = statusLabel(profile.application_status || "pending");
+  $("#profile-vetting-status").className = `status-badge ${profile.application_status === "approved" ? "success" : profile.application_status === "rejected" ? "warning" : "neutral"}`;
+  $("#profile-application-status").textContent = `Application ${statusLabel(profile.application_status || "pending")}`;
+}
+async function loadProfessionalProfile() {
+  if (role.value !== "professional") return;
+  try { professionalProfile = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/profile`); setProfileForm(professionalProfile); }
+  catch (error) { if (!error.message.includes("404")) showMessage(error.message, "error"); $("#profile-completeness").textContent = "Start after submitting your application"; }
+}
+async function saveProfessionalProfile(event) {
+  event.preventDefault();
+  const payload = {
+    display_name: $("#profile-display-name").value.trim(), headline: $("#profile-headline").value.trim(), bio: $("#profile-bio").value.trim(),
+    skills: $("#profile-skills").value.split(",").map((item) => item.trim()).filter(Boolean),
+    specializations: $("#profile-specializations").value.split(",").map((item) => item.trim()).filter(Boolean),
+    availability: $("#profile-availability").value.trim(), portfolio: profileEntries($("#profile-portfolio").value, ["title", "url"]),
+    experience: profileEntries($("#profile-experience").value, ["title", "company", "start", "end"]), education: profileEntries($("#profile-education").value, ["school", "degree", "field"]),
+    expected_version: professionalProfile?.version,
+  };
+  if (!payload.display_name) return showMessage("Add a display name before saving your profile.", "error");
+  try { professionalProfile = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/profile`, { method: "PUT", body: JSON.stringify(payload) }); setProfileForm(professionalProfile); $("#profile-save-status").textContent = "Saved as a reviewable draft."; showMessage("Profile draft saved; admission remains a human decision.", "success"); }
+  catch (error) { $("#profile-save-status").textContent = error.message; showMessage(error.message, "error"); }
+}
 function renderReviews() { $("#reviews-list").innerHTML = emptyState("No review feedback yet", "Independent review decisions and requested revisions will appear after a deliverable is submitted."); }
 
 // Existing admin lifecycle controls remain available in the developer harness.
@@ -89,7 +134,7 @@ document.querySelectorAll("[data-view-target]").forEach((button) => button.addEv
 window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "overview"));
 $("#mobile-menu").addEventListener("click", () => $(".nav-list").classList.toggle("nav-open"));
 $("#refresh").addEventListener("click", refresh); $("#load-assignments").addEventListener("click", loadAssignments); $("#role").addEventListener("change", syncRole);
-$("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable);
+$("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable); $("#professional-profile-form").addEventListener("submit", saveProfessionalProfile);
 $("#opportunity-filter").addEventListener("change", renderOpportunities); $("#opportunity-search").addEventListener("input", renderOpportunities);
 $("#client-refresh").addEventListener("click", loadClientOverview); $("#client-project-search").addEventListener("input", renderClientProjects); $("#client-project-status").addEventListener("change", renderClientProjects);
 $("#client-message-project").addEventListener("change", (event) => loadClientOperations(event.target.value)); $("#client-message-form").addEventListener("submit", sendClientMessage);
@@ -256,6 +301,7 @@ function navigate(viewName) {
   if (view === "opportunities") loadOpportunities();
   if (view === "deliverables") loadSelectedDeliverables();
   if (view === "reviews") renderReviews();
+  if (view === "profile") loadProfessionalProfile();
   if (window.innerWidth <= 680) document.querySelector(".nav-list")?.classList.remove("nav-open");
 }
 function syncRole() {
@@ -280,4 +326,4 @@ function syncRole() {
   if (!isClient && location.hash.startsWith("#client-")) { history.replaceState(null, "", "#overview"); navigate("overview"); }
   if (role.value === "professional") $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value;
 }
-async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = role.value === "admin" ? "Internal admin" : me.roles.includes("professional") ? "Approved professional" : me.roles.includes("client") ? "Authorized client" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); if (role.value === "admin") await loadAdminOverview(); else if (role.value === "client") await loadClientOverview(); else { await loadAssignments(); await loadApplication(); } } catch (error) { showMessage(error.message, "error"); } }
+async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = role.value === "admin" ? "Internal admin" : me.roles.includes("professional") ? "Approved professional" : me.roles.includes("client") ? "Authorized client" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); if (role.value === "admin") await loadAdminOverview(); else if (role.value === "client") await loadClientOverview(); else { await loadAssignments(); await loadApplication(); await loadProfessionalProfile(); } } catch (error) { showMessage(error.message, "error"); } }

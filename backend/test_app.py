@@ -212,6 +212,33 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.json()[0]["status"], "approved")
 
+    def test_professional_profile_is_editable_without_granting_admission(self) -> None:
+        submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)
+        self.assertEqual(submitted.status_code, 201)
+        profile = {
+            "display_name": "Alex Johnson",
+            "headline": "Operations automation specialist",
+            "bio": "I help teams turn reliable process evidence into maintainable automation.",
+            "skills": ["Python", "Data quality"],
+            "specializations": ["Operations analytics"],
+            "education": [{"school": "Synthetic University", "degree": "BSc", "field": "Systems"}],
+            "experience": [{"title": "Automation lead", "company": "Synthetic Co", "start": "2022", "end": "Present"}],
+            "portfolio": [{"title": "Inventory workflow", "url": "https://example.test/portfolio/inventory"}],
+            "availability": "Available for scoped work",
+        }
+        saved = self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json=profile)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["version"], 1)
+        self.assertEqual(saved.json()["application_status"], "pending")
+        loaded = self.client.get("/api/professionals/professional-1/profile", headers=self.professional)
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["skills"], ["Python", "Data quality"])
+        self.assertEqual(self.client.get("/api/professionals/professional-1/profile", headers=self.client_user).status_code, 403)
+        stale = self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json={**profile, "expected_version": 99})
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(self.client.get("/api/professionals/admissions?status_filter=pending", headers=self.admin).json()[0]["status"], "pending")
+        self.assertIn("professional_profile.updated", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
+
     def test_opportunity_board_requires_approval_and_preserves_interest_review(self) -> None:
         blocked = self.client.get("/api/opportunities", headers=self.professional)
         self.assertEqual(blocked.status_code, 403)

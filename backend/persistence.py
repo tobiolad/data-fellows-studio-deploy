@@ -553,6 +553,59 @@ class PostgresRepository:
                 return None
             return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]}
 
+    def get_professional_profile(self, professional_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT status FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            admission = cursor.fetchone()
+            if admission is None:
+                raise LookupError("Professional application not found")
+            cursor.execute(
+                """SELECT professional_id, display_name, headline, bio, skills, specializations,
+                          education, experience, portfolio, availability, version, updated_at
+                   FROM professional_profiles WHERE professional_id = %s""",
+                (professional_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {
+                "professional_id": row[0], "display_name": row[1], "headline": row[2], "bio": row[3],
+                "skills": row[4], "specializations": row[5], "education": row[6], "experience": row[7],
+                "portfolio": row[8], "availability": row[9], "version": row[10], "updated_at": row[11],
+                "application_status": admission[0],
+            }
+
+    def upsert_professional_profile(self, professional_id: str, payload: dict[str, Any], actor: str, expected_version: int | None = None) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT status FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            admission = cursor.fetchone()
+            if admission is None:
+                raise LookupError("Submit a professional application before editing a profile")
+            cursor.execute("SELECT version FROM professional_profiles WHERE professional_id = %s", (professional_id,))
+            current = cursor.fetchone()
+            current_version = int(current[0]) if current else 0
+            if expected_version is not None and expected_version != current_version:
+                raise ValueError("Profile changed since it was loaded; refresh before saving")
+            version = current_version + 1
+            cursor.execute(
+                """INSERT INTO professional_profiles
+                   (professional_id, display_name, headline, bio, skills, specializations, education, experience, portfolio, availability, version, updated_at)
+                   VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, now())
+                   ON CONFLICT (professional_id) DO UPDATE SET display_name = EXCLUDED.display_name,
+                     headline = EXCLUDED.headline, bio = EXCLUDED.bio, skills = EXCLUDED.skills,
+                     specializations = EXCLUDED.specializations, education = EXCLUDED.education,
+                     experience = EXCLUDED.experience, portfolio = EXCLUDED.portfolio,
+                     availability = EXCLUDED.availability, version = EXCLUDED.version, updated_at = now()""",
+                (professional_id, payload["display_name"], payload.get("headline", ""), payload.get("bio", ""),
+                 json.dumps(payload.get("skills", [])), json.dumps(payload.get("specializations", [])),
+                 json.dumps(payload.get("education", [])), json.dumps(payload.get("experience", [])),
+                 json.dumps(payload.get("portfolio", [])), payload.get("availability", ""), version),
+            )
+            self._audit(cursor, None, actor, "professional_profile.updated", "professional_profile", professional_id, {"version": version})
+            return {**payload, "professional_id": professional_id, "version": version, "application_status": admission[0]}
+
     def decide_professional(self, professional_id: str, status: str, actor: str) -> None:
         if status not in {"approved", "rejected", "revoked"}:
             raise ValueError("Unsupported professional decision")
