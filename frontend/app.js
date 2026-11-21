@@ -112,7 +112,7 @@ function renderAdminOverview() {
     ["Internal QA", (adminData.projects || []).filter((item) => item.awaiting_review > 0)],
     ["Completed", (adminData.projects || []).filter((item) => item.status === "completed")],
   ];
-  $("#admin-pipeline").innerHTML = stages.map(([label, items]) => `<div class="pipeline-column"><div class="pipeline-heading"><strong>${escapeHtml(label)}</strong><span>${items.length}</span></div>${items.slice(0, 4).map((item) => `<div class="pipeline-item"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.organization_name || "Client unavailable")}</small>${adminStatus(item.status)}</div>`).join("") || `<p class="muted">No projects</p>`}</div>`).join("");
+  $("#admin-pipeline").innerHTML = stages.map(([label, items]) => { const visible = items.slice(0, 3); const remainder = items.length - visible.length; return `<div class="pipeline-column"><div class="pipeline-heading"><strong>${escapeHtml(label)}</strong><span>${items.length}</span></div>${visible.map((item) => `<div class="pipeline-item"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.organization_name || "Client unavailable")}</small>${adminStatus(item.status)}</div>`).join("") || `<p class="muted">No projects</p>`}${remainder > 0 ? `<a class="pipeline-more" href="#admin-projects" data-view="admin-projects">View ${remainder} more</a>` : ""}</div>`; }).join("");
   const attention = [];
   if (m.awaiting_review) attention.push([`${m.awaiting_review} deliverable${m.awaiting_review === 1 ? "" : "s"} awaiting review`, "Quality queue", "admin-quality"]);
   if (m.pending_applications) attention.push([`${m.pending_applications} professional application${m.pending_applications === 1 ? "" : "s"}`, "Pending vetting", "admin-applications"]);

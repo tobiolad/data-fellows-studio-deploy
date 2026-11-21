@@ -112,3 +112,61 @@ h2 { margin-bottom: 4px; font-size: 17px; line-height: 1.25; letter-spacing: -.0
 .admin-toolbar { display:flex; align-items:center; gap:9px; margin: -6px 0 15px; flex-wrap:wrap; }.admin-toolbar input, .admin-toolbar select { border:1px solid #d9e0ec; border-radius:7px; padding:10px 11px; color:#1d2e4c; background:#fff; }.admin-toolbar input { min-width:260px; flex:1; }.admin-toolbar .muted { margin-left:auto; }.admin-detail-drawer { position:fixed; z-index:20; top:0; right:0; width:min(430px,92vw); height:100vh; overflow-y:auto; padding:28px; background:#fff; box-shadow:-12px 0 30px rgba(14,35,78,.18); }.admin-detail-drawer[hidden] { display:none; }.drawer-close { float:right; border:0; background:#eef3fb; border-radius:50%; width:32px; height:32px; color:#29436c; font-size:21px; }.drawer-details { display:grid; gap:0; margin-top:24px; }.drawer-details div { padding:12px 0; border-bottom:1px solid var(--line); }.drawer-details dt { color:#8390a6; font-size:10px; text-transform:uppercase; letter-spacing:.08em; }.drawer-details dd { margin:5px 0 0; color:#263754; font-size:12px; overflow-wrap:anywhere; }
 @media (max-width: 1050px) { .pipeline-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .admin-card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 680px) { .admin-dashboard-grid, .admin-two-column, .settings-grid { grid-template-columns: 1fr; } .pipeline-grid, .admin-card-grid { grid-template-columns: 1fr; } .admin-nav { max-height: none; } .admin-nav a { min-height: 40px; }.admin-toolbar { align-items:stretch; flex-direction:column; }.admin-toolbar input,.admin-toolbar select,.admin-toolbar button { width:100%; }.admin-toolbar .muted { margin-left:0; } }
+
+/* Data Fellows shared design tokens and Mission Control refinement. */
+:root {
+  --df-bg: #f5f7fb;
+  --df-surface: #ffffff;
+  --df-surface-subtle: #f8fafc;
+  --df-ink: #14213d;
+  --df-ink-secondary: #59677e;
+  --df-ink-muted: #65738a;
+  --df-blue: #1556c0;
+  --df-blue-strong: #10439a;
+  --df-line: #d9e1ee;
+  --df-success: #18754e;
+  --df-warning: #8a5b00;
+  --df-danger: #a13a3a;
+  --df-space-1: 4px;
+  --df-space-2: 8px;
+  --df-space-3: 12px;
+  --df-space-4: 16px;
+  --df-space-5: 20px;
+  --df-space-6: 24px;
+  --df-radius-sm: 8px;
+  --df-radius-md: 12px;
+  --blue: var(--df-blue);
+  --muted: var(--df-ink-secondary);
+}
+
+html, body { overflow-x: clip; }
+.admin-view .eyebrow { color: var(--df-blue-strong); font-size: 11px; letter-spacing: .08em; }
+.admin-view .page-heading p:not(.eyebrow), .admin-view .panel-heading p, .admin-view .muted { color: var(--df-ink-secondary); }
+.admin-view .pipeline-column { min-height: 132px; background: var(--df-surface-subtle); }
+.admin-view .pipeline-item { padding: 10px; }
+.admin-view .pipeline-item small { color: var(--df-ink-secondary); font-size: 11px; }
+.pipeline-more { display: block; margin: 10px 2px 2px; color: var(--df-blue-strong); font-size: 11px; font-weight: 750; }
+.admin-view .assignment-table { overflow-x: auto; border-radius: var(--df-radius-sm); scrollbar-color: #b7c5dc transparent; }
+.admin-view .assignment-table table { min-width: 640px; }
+.admin-view .assignment-table th { color: var(--df-ink-secondary); }
+.admin-view .assignment-table td { color: var(--df-ink); }
+.admin-view .admin-card { border-color: var(--df-line); border-radius: var(--df-radius-md); }
+.admin-view .admin-card h2 { color: var(--df-ink); }
+.admin-view .admin-card .card-footer small { color: var(--df-ink-secondary); font-size: 11px; }
+.admin-view .status-badge { font-size: 11px; }
+.admin-view .status-badge.success, .admin-view .status-badge.approved { color: var(--df-success); }
+.admin-view .status-badge.warning { color: var(--df-warning); }
+.admin-view .status-badge.neutral { color: var(--df-ink-secondary); }
+.admin-view .avatar, .admin-view .large-avatar { background: #5d3c35; }
+.admin-view .primary-button:focus-visible, .admin-view .secondary-button:focus-visible, .admin-view a:focus-visible, .admin-view input:focus-visible, .admin-view select:focus-visible, .admin-view summary:focus-visible { outline: 3px solid #8bb4ff; outline-offset: 2px; }
+.admin-view .primary-button:hover { background: var(--df-blue-strong); border-color: var(--df-blue-strong); }
+.admin-view .secondary-button:hover { border-color: #9bb5de; background: #f4f7fc; }
+.admin-view .attention-item { border-color: var(--df-line); }
+.admin-view .admin-detail-drawer { border-left: 1px solid var(--df-line); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+@media (max-width: 680px) {
+  .admin-view .pipeline-column { min-height: 0; }
+  .admin-view .pipeline-item { min-height: 0; }
+  .admin-view .assignment-table { margin-right: -2px; }
+  .admin-view .page-heading h1 { font-size: 30px; }
+}
