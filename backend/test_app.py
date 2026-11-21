@@ -89,6 +89,17 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertIn("deliverable.client_accepted", actions)
         self.assertIn("project.completed", actions)
 
+    def test_admin_overview_is_role_scoped_and_uses_real_counts(self) -> None:
+        organization = self.post("/api/organizations", {"name": "Mission Control client"}, self.admin)
+        engagement = self.post("/api/engagements", {"organization_id": organization["id"], "name": "Mission Control engagement", "objective": "Validate operational reporting"}, self.admin)
+        project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Mission Control project"}, self.admin)
+        self.post("/api/work-packages", {"project_id": project["id"], "title": "Bounded review package", "acceptance_criteria": ["Review complete"]}, self.admin)
+        overview = self.client.get("/api/admin/overview", headers=self.admin)
+        self.assertEqual(overview.status_code, 200)
+        self.assertEqual(overview.json()["metrics"]["active_engagements"], 1)
+        self.assertEqual(overview.json()["projects"][0]["organization_name"], "Mission Control client")
+        self.assertEqual(self.client.get("/api/admin/overview", headers=self.professional).status_code, 403)
+
     def test_unapproved_professional_and_cross_organization_access_are_denied(self) -> None:
         first = self.post("/api/organizations", {"name": "First synthetic org"}, self.admin)
         second = self.post("/api/organizations", {"name": "Second synthetic org"}, self.admin)

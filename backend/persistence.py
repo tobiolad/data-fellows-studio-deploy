@@ -167,6 +167,57 @@ class PostgresRepository:
                 for row in cursor.fetchall()
             ]
 
+    def admin_overview(self, actor: str) -> dict[str, Any]:
+        """Read-only operational summary for the internal Mission Control UI."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id, name, created_at FROM organizations ORDER BY created_at DESC")
+            organizations = [{"id": str(row[0]), "name": row[1], "created_at": row[2]} for row in cursor.fetchall()]
+            cursor.execute("""SELECT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at, o.name
+                            FROM engagements e JOIN organizations o ON o.id = e.organization_id ORDER BY e.created_at DESC""")
+            engagements = [{"id": str(row[0]), "organization_id": str(row[1]), "name": row[2], "objective": row[3], "status": row[4], "created_at": row[5], "organization_name": row[6]} for row in cursor.fetchall()]
+            cursor.execute("""SELECT p.id, p.engagement_id, p.name, p.status, p.created_at, e.name, o.name,
+                                   COUNT(DISTINCT w.id), COUNT(DISTINCT d.id), COUNT(DISTINCT CASE WHEN d.status = 'under_review' THEN d.id END)
+                            FROM projects p JOIN engagements e ON e.id = p.engagement_id JOIN organizations o ON o.id = e.organization_id
+                            LEFT JOIN work_packages w ON w.project_id = p.id LEFT JOIN deliverables d ON d.work_package_id = w.id
+                            GROUP BY p.id, e.name, o.name ORDER BY p.created_at DESC""")
+            projects = [{"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4], "engagement_name": row[5], "organization_name": row[6], "work_package_count": row[7], "deliverable_count": row[8], "awaiting_review": row[9]} for row in cursor.fetchall()]
+            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at FROM professional_admissions ORDER BY created_at DESC")
+            applications = [{"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]} for row in cursor.fetchall()]
+            cursor.execute("SELECT id, title, summary, specialization, skills, compensation, deadline, status, created_at FROM opportunities WHERE status = 'published' ORDER BY created_at DESC")
+            opportunities = [{"id": str(row[0]), "title": row[1], "summary": row[2], "specialization": row[3], "skills": row[4], "compensation": row[5], "deadline": row[6], "status": row[7], "created_at": row[8]} for row in cursor.fetchall()]
+            cursor.execute("""SELECT d.id, d.work_package_id, d.version, d.title, d.submitted_by, d.status, d.created_at, p.name, e.name, o.name
+                            FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id JOIN projects p ON p.id = w.project_id
+                            JOIN engagements e ON e.id = p.engagement_id JOIN organizations o ON o.id = e.organization_id ORDER BY d.created_at DESC""")
+            deliverables = [{"id": str(row[0]), "work_package_id": str(row[1]), "version": row[2], "title": row[3], "submitted_by": row[4], "status": row[5], "created_at": row[6], "project_name": row[7], "engagement_name": row[8], "organization_name": row[9]} for row in cursor.fetchall()]
+            cursor.execute("""SELECT r.id, r.work_package_id, r.requested_by, r.agent_version, r.policy_version, r.budget_cents,
+                                   r.spent_cents, r.status, r.cancel_requested, r.error_code, r.created_at, w.title, p.name, e.name
+                            FROM ai_runs r JOIN work_packages w ON w.id = r.work_package_id JOIN projects p ON p.id = w.project_id
+                            JOIN engagements e ON e.id = p.engagement_id ORDER BY r.created_at DESC""")
+            ai_runs = [{"id": str(row[0]), "work_package_id": str(row[1]), "requested_by": row[2], "agent_version": row[3], "policy_version": row[4], "budget_cents": row[5], "spent_cents": row[6], "status": row[7], "cancel_requested": row[8], "error_code": row[9], "created_at": row[10], "work_package_title": row[11], "project_name": row[12], "engagement_name": row[13]} for row in cursor.fetchall()]
+            cursor.execute("SELECT organization_id, actor_id, action, resource_type, resource_id, metadata, created_at FROM audit_events ORDER BY created_at DESC LIMIT 25")
+            audit = [{"organization_id": None if row[0] is None else str(row[0]), "actor_id": row[1], "action": row[2], "resource_type": row[3], "resource_id": row[4], "metadata": row[5], "created_at": row[6]} for row in cursor.fetchall()]
+            cursor.execute("SELECT COUNT(*) FROM artifacts WHERE status = 'pending_review'")
+            pending_ai_approvals = int(cursor.fetchone()[0])
+            metrics = {
+                "active_engagements": sum(item["status"] in {"authorized", "active"} for item in engagements),
+                "projects_awaiting_kickoff": sum(item["status"] == "active" and item["work_package_count"] == 0 for item in projects),
+                "active_projects": sum(item["status"] == "active" for item in projects),
+                "awaiting_review": sum(item["status"] == "under_review" for item in deliverables),
+                "client_approvals_pending": sum(item["status"] == "approved" for item in deliverables),
+                "pending_applications": sum(item["status"] == "pending" for item in applications),
+                "open_opportunities": len(opportunities),
+                "active_assignments": self._count_active_assignments(cursor),
+                "ai_pending_approval": pending_ai_approvals,
+                "ai_failed": sum(item["status"] == "failed" for item in ai_runs),
+            }
+            return {"organizations": organizations, "engagements": engagements, "projects": projects, "applications": applications, "professionals": applications, "opportunities": opportunities, "deliverables": deliverables, "ai_runs": ai_runs, "audit": audit, "metrics": metrics}
+
+    @staticmethod
+    def _count_active_assignments(cursor: Any) -> int:
+        cursor.execute("SELECT COUNT(*) FROM assignments WHERE status = 'accepted' AND (expires_at IS NULL OR expires_at > now())")
+        return int(cursor.fetchone()[0])
+
     def create_project(self, engagement_id: UUID, name: str, actor: str) -> UUID:
         project_id = uuid4()
         with self.transaction() as connection:

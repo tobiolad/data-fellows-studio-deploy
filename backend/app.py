@@ -508,6 +508,61 @@ def list_engagements(request: Request) -> list[dict]:
     return visible
 
 
+@app.get("/api/admin/overview")
+def admin_overview(request: Request) -> dict:
+    """Return admin-only operational summaries from authorized records."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        return postgres_repository().admin_overview(actor.actor_id)
+
+    projects = []
+    for project in store.projects.values():
+        engagement = store.engagements.get(project["engagement_id"], {})
+        organization = store.organizations.get(engagement.get("organization_id"), {})
+        packages = [item for item in store.work_packages.values() if item["project_id"] == project["id"]]
+        package_ids = {item["id"] for item in packages}
+        deliverables = [item for item in store.deliverables.values() if item["work_package_id"] in package_ids]
+        projects.append({
+            **project,
+            "engagement_name": engagement.get("name"),
+            "organization_name": organization.get("name"),
+            "work_package_count": len(packages),
+            "deliverable_count": len(deliverables),
+            "awaiting_review": sum(item["status"] == "under_review" for item in deliverables),
+        })
+    applications = list(store.professional_admissions.values())
+    open_opportunities = [item for item in store.opportunities.values() if item["status"] == "published"]
+    active_assignments = [item for item in store.assignments.values() if item["status"] == "accepted"]
+    pending_reviews = [item for item in store.deliverables.values() if item["status"] == "under_review"]
+    pending_ai = [item for item in store.artifacts.values() if item["status"] == "pending_review"]
+    failed_ai = [item for item in store.ai_runs.values() if item["status"] == "failed"]
+    return {
+        "organizations": list(store.organizations.values()),
+        "engagements": list(store.engagements.values()),
+        "projects": projects,
+        "applications": applications,
+        "professionals": applications,
+        "opportunities": open_opportunities,
+        "opportunity_interests": list(store.opportunity_interests.values()),
+        "deliverables": list(store.deliverables.values()),
+        "ai_runs": list(store.ai_runs.values()),
+        "audit": list(reversed(store.audit[-25:])),
+        "metrics": {
+            "active_engagements": sum(item["status"] in {"authorized", "active"} for item in store.engagements.values()),
+            "projects_awaiting_kickoff": sum(item["status"] == "active" and not any(package["project_id"] == item["id"] for package in store.work_packages.values()) for item in store.projects.values()),
+            "active_projects": sum(item["status"] == "active" for item in store.projects.values()),
+            "awaiting_review": len(pending_reviews),
+            "client_approvals_pending": sum(item["status"] == "approved" for item in store.deliverables.values()),
+            "pending_applications": sum(item["status"] == "pending" for item in applications),
+            "open_opportunities": len(open_opportunities),
+            "active_assignments": len(active_assignments),
+            "ai_pending_approval": len(pending_ai),
+            "ai_failed": len(failed_ai),
+        },
+    }
+
+
 @app.get("/api/engagements/{engagement_id}/projects")
 def list_projects(engagement_id: str, request: Request) -> list[dict]:
     actor = identity(request)

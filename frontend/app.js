@@ -21,7 +21,7 @@ function statusClass(status) { return String(status || "neutral").replaceAll("_"
 function statusLabel(status) { return String(status || "Not started").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 function emptyState(title, text) { return `<div class="empty-panel inline-empty"><span class="empty-icon">◇</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(text)}</p></div>`; }
 
-function navigate(viewName) {
+function legacyNavigate(viewName) {
   const view = viewName || "overview";
   $$(".view").forEach((item) => item.classList.toggle("active-view", item.id === `${view}-view`));
   $$("[data-view]").forEach((link) => link.classList.toggle("active", link.dataset.view === view));
@@ -79,8 +79,8 @@ async function inviteProfessional() { try { const item = await request(`/api/wor
 async function decideProfessional(decision) { try { const item = await request(`/api/professionals/${encodeURIComponent($("#professional-id").value.trim())}/decision`, { method: "POST", body: JSON.stringify({ decision }) }); showMessage(`Professional ${decision}.`, "success"); } catch (error) { showMessage(error.message, "error"); } }
 async function loadAdmissions() { try { const items = await request("/api/professionals/admissions?status_filter=pending"); $("#workspace-results").textContent = items.length ? `${items.length} pending application(s)` : "No pending applications"; } catch (error) { showMessage(error.message, "error"); } }
 async function completeProject() { try { await request(`/api/projects/${encodeURIComponent($("#complete-project-id").value.trim())}/complete`, { method: "POST", body: "{}" }); showMessage("Project completed after client acceptance.", "success"); } catch (error) { showMessage(error.message, "error"); } }
-async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = me.roles.includes("professional") ? "Approved professional" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); await loadAssignments(); await loadApplication(); } catch (error) { showMessage(error.message, "error"); } }
-function syncRole() { actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`; $("#legacy-admin-controls").hidden = role.value !== "admin"; $("#review-action").hidden = role.value !== "reviewer"; $("#client-acceptance").hidden = role.value !== "client"; $("#developer-tools").open = role.value === "admin"; $("#user-role").textContent = role.value === "professional" ? "Approved professional" : statusLabel(role.value); if (role.value === "professional") { $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value; } }
+async function legacyRefresh() { try { const me = await request("/api/me"); $("#user-role").textContent = me.roles.includes("professional") ? "Approved professional" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); await loadAssignments(); await loadApplication(); } catch (error) { showMessage(error.message, "error"); } }
+function legacySyncRole() { actor.value = role.value === "admin" ? "admin-1" : `${role.value}-1`; $("#legacy-admin-controls").hidden = role.value !== "admin"; $("#review-action").hidden = role.value !== "reviewer"; $("#client-acceptance").hidden = role.value !== "client"; $("#developer-tools").open = role.value === "admin"; $("#user-role").textContent = role.value === "professional" ? "Approved professional" : statusLabel(role.value); if (role.value === "professional") { $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value; } }
 
 document.querySelectorAll("[data-view]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); const view = link.dataset.view; history.replaceState(null, "", `#${view}`); navigate(view); }));
 document.querySelectorAll("[data-view-target]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.viewTarget)));
@@ -91,3 +91,82 @@ $("#submit-application").addEventListener("click", submitApplication); $("#submi
 $("#opportunity-filter").addEventListener("change", renderOpportunities); $("#opportunity-search").addEventListener("input", renderOpportunities);
 $("#create-organization").addEventListener("click", createOrganization); $("#create-engagement").addEventListener("click", createEngagement); $("#create-project").addEventListener("click", createProject); $("#create-package").addEventListener("click", createWorkPackage); $("#invite-professional-button").addEventListener("click", inviteProfessional); $("#accept-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "accept")); $("#decline-assignment").addEventListener("click", () => decideAssignment($("#assignment-id").value.trim(), "decline")); $("#load-admissions").addEventListener("click", loadAdmissions); $("#approve-professional").addEventListener("click", () => decideProfessional("approved")); $("#reject-professional").addEventListener("click", () => decideProfessional("rejected")); $("#complete-project").addEventListener("click", completeProject);
 syncRole(); navigate(location.hash.slice(1) || "overview"); refresh();
+
+// Mission Control is an admin-only read model over the same authorized API.
+let adminData = null;
+const adminMetric = (label, value, tone = "blue", note = "From authorized records") => `<article class="metric-card"><div class="metric-top"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-icon ${tone}">●</span></div><div class="metric-value">${escapeHtml(value)}</div><div class="metric-note">${escapeHtml(note)}</div></article>`;
+function adminStatus(status) { return `<span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>`; }
+function adminEmpty(text) { return `<div class="empty-panel inline-empty"><span class="empty-icon">◇</span><h2>No records</h2><p>${escapeHtml(text)}</p></div>`; }
+function renderAdminOverview() {
+  if (!adminData) return;
+  const m = adminData.metrics || {};
+  $("#admin-metric-grid").innerHTML = [
+    adminMetric("Active engagements", m.active_engagements || 0, "blue", "Authorized client work"),
+    adminMetric("Awaiting review", m.awaiting_review || 0, "purple", "Deliverables under review"),
+    adminMetric("Professionals available", (adminData.professionals || []).filter((item) => item.status === "approved").length, "green", "Approved admission records"),
+    adminMetric("AI runs pending approval", m.ai_pending_approval || 0, "orange", "Human decision required"),
+  ].join("");
+  const stages = [
+    ["Planning", (adminData.projects || []).filter((item) => item.status === "active" && item.work_package_count === 0)],
+    ["Active delivery", (adminData.projects || []).filter((item) => item.status === "active" && item.work_package_count > 0 && !item.awaiting_review)],
+    ["Internal QA", (adminData.projects || []).filter((item) => item.awaiting_review > 0)],
+    ["Completed", (adminData.projects || []).filter((item) => item.status === "completed")],
+  ];
+  $("#admin-pipeline").innerHTML = stages.map(([label, items]) => `<div class="pipeline-column"><div class="pipeline-heading"><strong>${escapeHtml(label)}</strong><span>${items.length}</span></div>${items.slice(0, 4).map((item) => `<div class="pipeline-item"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.organization_name || "Client unavailable")}</small>${adminStatus(item.status)}</div>`).join("") || `<p class="muted">No projects</p>`}</div>`).join("");
+  const attention = [];
+  if (m.awaiting_review) attention.push([`${m.awaiting_review} deliverable${m.awaiting_review === 1 ? "" : "s"} awaiting review`, "Quality queue", "admin-quality"]);
+  if (m.pending_applications) attention.push([`${m.pending_applications} professional application${m.pending_applications === 1 ? "" : "s"}`, "Pending vetting", "admin-applications"]);
+  if (m.client_approvals_pending) attention.push([`${m.client_approvals_pending} client approval${m.client_approvals_pending === 1 ? "" : "s"}`, "Approved version presented", "admin-approvals"]);
+  if (m.ai_pending_approval) attention.push([`${m.ai_pending_approval} AI run${m.ai_pending_approval === 1 ? "" : "s"} pending approval`, "Execution review required", "admin-ai"]);
+  if (m.ai_failed) attention.push([`${m.ai_failed} failed AI run${m.ai_failed === 1 ? "" : "s"}`, "Execution recovery", "admin-ai"]);
+  $("#admin-attention-count").textContent = attention.length;
+  $("#admin-attention").innerHTML = attention.length ? attention.map(([title, note, view]) => `<a class="attention-item" href="#${view}" data-view="${view}"><span class="attention-icon">!</span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(note)}</small></span><span>›</span></a>`).join("") : adminEmpty("There are no pending approvals or blocked actions.");
+  $("#admin-projects-table").innerHTML = adminData.projects?.length ? `<table><thead><tr><th>Project</th><th>Client</th><th>Stage</th><th>Work packages</th><th>Status</th></tr></thead><tbody>${adminData.projects.slice(0, 8).map((item) => `<tr><td><div class="assignment-name"><span class="assignment-mark">▣</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.engagement_name || "Engagement")}</small></div></div></td><td>${escapeHtml(item.organization_name || "—")}</td><td>${item.awaiting_review ? "Internal QA" : item.status === "completed" ? "Completed" : item.work_package_count ? "Active delivery" : "Planning"}</td><td>${item.work_package_count}</td><td>${adminStatus(item.status)}</td></tr>`).join("")}</tbody></table>` : adminEmpty("Projects will appear after an authorized engagement is created.");
+  const runs = adminData.ai_runs || [];
+  $("#admin-ai-summary").innerHTML = `<div class="summary-row"><span>Queued or running</span><strong>${runs.filter((item) => ["queued", "running"].includes(item.status)).length}</strong></div><div class="summary-row"><span>Pending approval</span><strong>${m.ai_pending_approval || 0}</strong></div><div class="summary-row"><span>Failed</span><strong>${m.ai_failed || 0}</strong></div><div class="summary-row"><span>Recorded spend</span><strong>${runs.length ? `${runs.reduce((sum, item) => sum + (item.spent_cents || 0), 0)} cents` : "Not available"}</strong></div>`;
+  $("#admin-audit-summary").innerHTML = (adminData.audit || []).slice(0, 5).map((item) => `<div class="summary-row"><span>${escapeHtml(item.action)}</span><small>${escapeHtml(item.actor_id)} · ${escapeHtml(item.resource_type)}</small></div>`).join("") || `<p class="muted">No audit activity recorded.</p>`;
+  document.querySelectorAll("#admin-attention [data-view]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); navigate(link.dataset.view); }));
+}
+function renderAdminLists(view) {
+  if (!adminData) return;
+  const cards = (items, render) => items?.length ? items.map(render).join("") : adminEmpty("No authorized records are available yet.");
+  if (view === "admin-engagements") $("#admin-engagement-list").innerHTML = cards(adminData.engagements, (item) => `<article class="panel admin-card"><div class="eyebrow">ENGAGEMENT</div><h2>${escapeHtml(item.name)}</h2><p>${escapeHtml(item.objective)}</p><div class="card-footer"><small>${escapeHtml(item.organization_name || "Client organization")}</small>${adminStatus(item.status)}</div></article>`);
+  if (view === "admin-clients") $("#admin-client-list").innerHTML = cards(adminData.organizations, (item) => `<article class="panel admin-card"><div class="eyebrow">CLIENT ORGANIZATION</div><h2>${escapeHtml(item.name)}</h2><p>Authorized relationship and engagement context.</p><div class="card-footer"><small>Created ${escapeHtml(dateLabel(item.created_at))}</small><span class="status-badge success">Active record</span></div></article>`);
+  if (view === "admin-projects") $("#admin-project-list").innerHTML = cards(adminData.projects, (item) => `<article class="panel admin-card"><div class="eyebrow">${escapeHtml(item.organization_name || "CLIENT")}</div><h2>${escapeHtml(item.name)}</h2><p>${escapeHtml(item.engagement_name || "Engagement")}</p><div class="assignment-meta"><div><span>Stage</span><strong>${item.awaiting_review ? "Internal QA" : item.work_package_count ? "Active delivery" : "Planning"}</strong></div><div><span>Packages</span><strong>${item.work_package_count}</strong></div><div><span>Status</span><strong>${adminStatus(item.status)}</strong></div></div></article>`);
+  if (view === "admin-professionals") $("#admin-professional-list").innerHTML = cards(adminData.professionals, (item) => `<article class="panel admin-card"><div class="eyebrow">PROFESSIONAL RECORD</div><h2>${escapeHtml(item.professional_id)}</h2><p>Verified admission status and scoped delivery access.</p><div class="card-footer"><small>${item.decided_by ? `Decided by ${escapeHtml(item.decided_by)}` : "Awaiting decision"}</small>${adminStatus(item.status)}</div></article>`);
+  if (view === "admin-applications") $("#admin-application-list").innerHTML = cards(adminData.applications, (item) => `<article class="panel admin-card"><div class="eyebrow">ADMISSION APPLICATION</div><h2>${escapeHtml(item.professional_id)}</h2><p>Application evidence and assessment notes remain review-controlled.</p><div class="card-footer"><small>${item.decided_at ? `Decision ${escapeHtml(dateLabel(item.decided_at))}` : "No decision recorded"}</small>${adminStatus(item.status)}</div></article>`);
+  if (view === "admin-opportunities") $("#admin-opportunity-list").innerHTML = cards(adminData.opportunities, (item) => `<article class="panel admin-card"><div class="eyebrow">${escapeHtml(item.specialization || "STAFFING")}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.summary)}</p><div class="chip-list">${(item.skills || []).map((skill) => `<span class="chip">${escapeHtml(skill)}</span>`).join("")}</div><div class="card-footer"><small>Sanitized professional-network listing</small>${adminStatus(item.status)}</div></article>`);
+  if (view === "admin-ai") $("#admin-ai-list").innerHTML = cards(adminData.ai_runs, (item) => `<article class="panel admin-card"><div class="eyebrow">${escapeHtml(item.agent_version || "AGENT")}</div><h2>${escapeHtml(item.work_package_title || "Bounded execution")}</h2><p>${escapeHtml(item.project_name || item.engagement_name || "Authorized work package")}</p><div class="assignment-meta"><div><span>Policy</span><strong>${escapeHtml(item.policy_version || "—")}</strong></div><div><span>Budget</span><strong>${item.budget_cents} cents</strong></div><div><span>Status</span><strong>${adminStatus(item.status)}</strong></div></div></article>`);
+  if (view === "admin-quality") { const items = (adminData.deliverables || []).filter((item) => item.status === "under_review"); $("#admin-quality-list").innerHTML = cards(items, (item) => `<article class="panel admin-card"><div class="eyebrow">INDEPENDENT REVIEW</div><h2>${escapeHtml(item.title)} · v${item.version}</h2><p>${escapeHtml(item.project_name || "Project")}</p><div class="card-footer"><small>${escapeHtml(item.organization_name || "Client")}</small>${adminStatus(item.status)}</div></article>`); }
+  if (view === "admin-approvals") { const items = (adminData.deliverables || []).filter((item) => item.status === "approved"); $("#admin-approval-list").innerHTML = cards(items, (item) => `<article class="panel admin-card"><div class="eyebrow">CLIENT REVIEW</div><h2>${escapeHtml(item.title)} · v${item.version}</h2><p>${escapeHtml(item.project_name || "Project")}</p><div class="card-footer"><small>Awaiting authorized client decision</small>${adminStatus(item.status)}</div></article>`); }
+  if (view === "admin-audit") $("#admin-audit-list").innerHTML = cards(adminData.audit, (item) => `<div class="audit-row"><span class="audit-dot"></span><div><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.actor_id)} · ${escapeHtml(item.resource_type)} · ${escapeHtml(item.resource_id)}</p></div><time>${escapeHtml(dateLabel(item.created_at))}</time></div>`);
+}
+async function loadAdminOverview() { try { adminData = await request("/api/admin/overview"); renderAdminOverview(); renderAdminLists(location.hash.slice(1) || "admin-overview"); } catch (error) { showMessage(error.message, "error"); } }
+function navigate(viewName) {
+  const view = viewName || (role.value === "admin" ? "admin-overview" : "overview");
+  $$(".view").forEach((item) => item.classList.toggle("active-view", item.id === `${view}-view`));
+  $$('[data-view]').forEach((link) => link.classList.toggle("active", link.dataset.view === view));
+  if (view.startsWith("admin-") && role.value === "admin") { loadAdminOverview(); }
+  if (view === "opportunities") loadOpportunities();
+  if (view === "deliverables") loadSelectedDeliverables();
+  if (view === "reviews") renderReviews();
+  if (window.innerWidth <= 680) document.querySelector(".nav-list")?.classList.remove("nav-open");
+}
+function syncRole() {
+  const isAdmin = role.value === "admin";
+  actor.value = isAdmin ? "admin-1" : `${role.value}-1`;
+  $("#legacy-admin-controls").hidden = !isAdmin;
+  $("#review-action").hidden = role.value !== "reviewer";
+  $("#client-acceptance").hidden = role.value !== "client";
+  $("#primary-nav").hidden = isAdmin;
+  $("#admin-nav").hidden = !isAdmin;
+  $("#portal-label").textContent = isAdmin ? "Mission Control" : "Professional portal";
+  $("#user-name").textContent = isAdmin ? "Data Fellows Admin" : role.value === "professional" ? "Alex Johnson" : statusLabel(role.value);
+  $("#user-role").textContent = isAdmin ? "Internal admin" : role.value === "professional" ? "Approved professional" : statusLabel(role.value);
+  if (isAdmin) showMessage("admin-1 · admin · API connected", "success");
+  $("#developer-tools").open = isAdmin;
+  if (isAdmin && !location.hash.startsWith("#admin-")) { history.replaceState(null, "", "#admin-overview"); navigate("admin-overview"); }
+  if (!isAdmin && location.hash.startsWith("#admin-")) { history.replaceState(null, "", "#overview"); navigate("overview"); }
+  if (role.value === "professional") $("#greeting-name").textContent = actor.value === "professional-1" ? "Alex" : actor.value;
+}
+async function refresh() { try { const me = await request("/api/me"); $("#user-role").textContent = role.value === "admin" ? "Internal admin" : me.roles.includes("professional") ? "Approved professional" : me.roles.join(", "); showMessage(`${me.id} · ${me.roles.join(", ")} · API connected`, "success"); if (role.value === "admin") await loadAdminOverview(); else { await loadAssignments(); await loadApplication(); } } catch (error) { showMessage(error.message, "error"); } }
