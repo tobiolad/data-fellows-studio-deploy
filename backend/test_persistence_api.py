@@ -1,6 +1,8 @@
 import os
 import unittest
 
+from backend.admission_fixture import admit_professional, assert_admission_gates
+
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
@@ -27,6 +29,9 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         os.environ.pop("STUDIO_PERSISTENCE", None)
         os.environ.pop("STUDIO_DATABASE_URL", None)
         app_module.postgres_repository.cache_clear()
+
+    def test_admission_policy_denials(self):
+        assert_admission_gates(self, "synthetic-policy-applicant")
 
     def test_core_organization_and_engagement_routes_use_postgres(self) -> None:
         organization = self.client.post("/api/organizations", headers=self.admin, json={"name": "Persistent synthetic org"})
@@ -85,7 +90,7 @@ class PostgresApiIntegrationTests(unittest.TestCase):
             json={"actor_id": "postgres-client-user", "role": "client"},
         )
         self.assertEqual(client.status_code, 201)
-        approval = self.client.post("/api/professionals/postgres-professional/approve", headers=self.admin)
+        approval = admit_professional(self.client, "postgres-professional", self.admin)
         self.assertEqual(approval.status_code, 200)
         admissions = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
         self.assertEqual(admissions.status_code, 200)

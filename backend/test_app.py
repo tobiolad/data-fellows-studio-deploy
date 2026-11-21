@@ -7,6 +7,7 @@ os.environ["STUDIO_TEST_MODE"] = "true"
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
+from backend.admission_fixture import admit_professional, assert_admission_gates
 from backend.app import app, store
 from backend.auth import Principal, TokenValidationError
 
@@ -29,6 +30,14 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertLess(response.status_code, 300, response.text)
         return response.json()
 
+    def test_deployed_environment_refuses_test_identity_on_api_routes(self):
+        for environment in ("staging", "production"):
+            with patch.dict(os.environ, {"STUDIO_ENV": environment, "STUDIO_TEST_MODE": "true"}):
+                self.assertEqual(self.client.get("/api/me", headers=self.admin).status_code, 503)
+
+    def test_admission_policy_denials(self):
+        assert_admission_gates(self, "synthetic-policy-applicant")
+
     def test_complete_synthetic_managed_delivery_lifecycle(self) -> None:
         organization = self.post("/api/organizations", {"name": "Synthetic Retail Co"}, self.admin)
         org_id = organization["id"]
@@ -38,7 +47,7 @@ class StudioLifecycleTests(unittest.TestCase):
         roster = self.client.get(f"/api/organizations/{org_id}/members", headers=self.admin)
         self.assertEqual(roster.status_code, 200)
         self.assertTrue(any(item["actor_id"] == "client-1" and item["role"] == "client" for item in roster.json()))
-        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        admit_professional(self.client, "professional-1", self.admin)
 
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Inventory modernization", "objective": "Reduce stockout investigation time"}, self.admin)
         project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Synthetic delivery"}, self.admin)
@@ -106,7 +115,7 @@ class StudioLifecycleTests(unittest.TestCase):
         self.post(f"/api/organizations/{org_id}/members", {"actor_id": "client-1", "role": "client"}, self.admin)
         self.post(f"/api/organizations/{org_id}/members", {"actor_id": "reviewer-1", "role": "reviewer"}, self.admin)
         self.post(f"/api/organizations/{org_id}/members", {"actor_id": "professional-1", "role": "professional"}, self.admin)
-        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        admit_professional(self.client, "professional-1", self.admin)
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Client delivery", "objective": "Publish a reviewed outcome"}, self.admin)
         project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Client portal project"}, self.admin)
         package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Reviewed handoff", "acceptance_criteria": ["Client can verify the outcome"]}, self.admin)
@@ -132,7 +141,7 @@ class StudioLifecycleTests(unittest.TestCase):
         org_id = organization["id"]
         for actor_id, role in (("client-1", "client"), ("professional-1", "professional"), ("reviewer-1", "reviewer")):
             self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
-        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        admit_professional(self.client, "professional-1", self.admin)
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Operations engagement", "objective": "Test scoped collaboration"}, self.admin)
         project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Operations project"}, self.admin)
         package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Operations package", "acceptance_criteria": ["Messages are scoped"]}, self.admin)
@@ -198,7 +207,7 @@ class StudioLifecycleTests(unittest.TestCase):
             headers=self.admin,
             json={"decision": "approved"},
         )
-        self.assertEqual(decision.status_code, 200)
+        self.assertEqual(decision.status_code, 410)
 
     def test_admission_queue_is_admin_only_and_tracks_decisions(self) -> None:
         submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)
@@ -207,7 +216,7 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(pending.status_code, 200)
         self.assertEqual(pending.json()[0]["professional_id"], "professional-1")
         self.assertEqual(self.client.get("/api/professionals/admissions", headers=self.professional).status_code, 403)
-        self.client.post("/api/professionals/professional-1/decision", headers=self.admin, json={"decision": "approved"})
+        admit_professional(self.client, "professional-1", self.admin)
         approved = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.json()[0]["status"], "approved")
@@ -238,7 +247,7 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(self.client.get("/api/professionals/admissions?status_filter=submitted", headers=self.admin).json()[0]["status"], "submitted")
         self.assertIn("professional_profile.updated", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
-        self.client.post("/api/professionals/professional-1/decision", headers=self.admin, json={"decision": "approved"})
+        admit_professional(self.client, "professional-1", self.admin)
         self.assertEqual(self.client.get("/api/professionals/professional-1/profile", headers=self.professional).json()["application_status"], "approved")
 
     def test_admission_review_is_independent_from_profile_completeness_and_audited(self) -> None:
@@ -251,7 +260,8 @@ class StudioLifecycleTests(unittest.TestCase):
         assessment = self.client.post("/api/professionals/professional-1/review", headers=auth("reviewer-1", "reviewer"), json={"status": "assessment", "assessment_requests": [{"title": "Synthetic assessment", "description": "Submit a short example"}], "next_action": "Complete assessment"})
         self.assertEqual(assessment.status_code, 200)
         approved = self.client.post("/api/professionals/professional-1/review", headers=auth("reviewer-1", "reviewer"), json={"status": "approved", "reason": "Evidence reviewed by an independent reviewer"})
-        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.status_code, 409)
+        approved = admit_professional(self.client, "professional-1", self.reviewer)
         self.assertEqual(approved.json()["status"], "approved")
         self.assertIn("professional.admission_approved", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
 
@@ -279,7 +289,7 @@ class StudioLifecycleTests(unittest.TestCase):
             self.admin,
         )
         self.post("/api/professionals/professional-1/application", {}, self.professional)
-        self.post("/api/professionals/professional-1/decision", {"decision": "approved"}, self.admin)
+        admit_professional(self.client, "professional-1", self.admin)
         visible = self.client.get("/api/opportunities", headers=self.professional)
         self.assertEqual(visible.status_code, 200)
         self.assertEqual(visible.json()[0]["id"], published["id"])
@@ -299,7 +309,7 @@ class StudioLifecycleTests(unittest.TestCase):
         org_id = organization["id"]
         for actor_id, role in (("reviewer-1", "reviewer"), ("professional-1", "professional")):
             self.post(f"/api/organizations/{org_id}/members", {"actor_id": actor_id, "role": role}, self.admin)
-        self.post("/api/professionals/professional-1/approve", {}, self.admin)
+        admit_professional(self.client, "professional-1", self.admin)
         engagement = self.post("/api/engagements", {"organization_id": org_id, "name": "Revision engagement", "objective": "Verify successors"}, self.admin)
         project = self.post("/api/projects", {"engagement_id": engagement["id"], "name": "Revision project"}, self.admin)
         package = self.post("/api/work-packages", {"project_id": project["id"], "title": "Revision package", "acceptance_criteria": ["review"]}, self.admin)

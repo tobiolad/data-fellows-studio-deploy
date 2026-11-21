@@ -18,6 +18,8 @@ from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 
+from backend.admission import check_approval
+
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 
@@ -182,8 +184,8 @@ class PostgresRepository:
                             LEFT JOIN work_packages w ON w.project_id = p.id LEFT JOIN deliverables d ON d.work_package_id = w.id
                             GROUP BY p.id, e.name, o.name ORDER BY p.created_at DESC""")
             projects = [{"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4], "engagement_name": row[5], "organization_name": row[6], "work_package_count": row[7], "deliverable_count": row[8], "awaiting_review": row[9]} for row in cursor.fetchall()]
-            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at, decision_reason, missing_information, assessment_requests, next_action FROM professional_admissions ORDER BY created_at DESC")
-            applications = [{"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4], "reviewed_at": row[5], "decision_reason": row[6], "missing_information": row[7], "assessment_requests": row[8], "next_action": row[9]} for row in cursor.fetchall()]
+            cursor.execute("SELECT a.professional_id, a.status, a.decided_by, a.decided_at, a.created_at, a.reviewed_at, a.decision_reason, a.missing_information, a.assessment_requests, a.next_action, p.display_name FROM professional_admissions a LEFT JOIN professional_profiles p ON p.professional_id = a.professional_id ORDER BY a.created_at DESC")
+            applications = [{"display_name": row[10], "professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4], "reviewed_at": row[5], "decision_reason": row[6], "missing_information": row[7], "assessment_requests": row[8], "next_action": row[9]} for row in cursor.fetchall()]
             cursor.execute("SELECT id, title, summary, specialization, skills, compensation, deadline, status, created_at FROM opportunities WHERE status = 'published' ORDER BY created_at DESC")
             opportunities = [{"id": str(row[0]), "title": row[1], "summary": row[2], "specialization": row[3], "skills": row[4], "compensation": row[5], "deadline": row[6], "status": row[7], "created_at": row[8]} for row in cursor.fetchall()]
             cursor.execute("""SELECT d.id, d.work_package_id, d.version, d.title, d.submitted_by, d.status, d.created_at, p.name, e.name, o.name
@@ -620,10 +622,16 @@ class PostgresRepository:
         """Record an independent admission review with explicit, auditable state."""
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT professional_id, created_at FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            cursor.execute("SELECT status, missing_information, assessment_requests FROM professional_admissions WHERE professional_id = %s FOR UPDATE", (professional_id,))
             existing = cursor.fetchone()
             if existing is None:
                 raise LookupError("Professional application not found")
+            if review["status"] == "approved":
+                cursor.execute("SELECT version, skills, evidence_references FROM professional_profiles WHERE professional_id = %s FOR SHARE", (professional_id,))
+                row = cursor.fetchone()
+                profile = dict(zip(("version", "skills", "evidence_references"), row)) if row else None
+                application = dict(zip(("status", "missing_information", "assessment_requests"), existing))
+                check_approval(application, profile, review, professional_id, actor)
             terminal = review["status"] in {"approved", "declined", "revoked"}
             cursor.execute(
                 """UPDATE professional_admissions
@@ -642,23 +650,10 @@ class PostgresRepository:
             )
             row = cursor.fetchone()
             self._audit(cursor, None, actor, f"professional.admission_{review['status']}", "professional_admission", professional_id,
-                        {"reason": review.get("reason", ""), "missing_information_count": len(review.get("missing_information", []))})
+                        {"reason": review.get("reason", ""), "reviewed_profile_version": review.get("reviewed_profile_version"), "missing_information_count": len(review.get("missing_information", []))})
             return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
                     "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7], "missing_information": row[8],
                     "assessment_requests": row[9], "evidence_references": row[10], "next_action": row[11]}
-
-    def decide_professional(self, professional_id: str, status: str, actor: str) -> None:
-        if status not in {"approved", "rejected", "revoked"}:
-            raise ValueError("Unsupported professional decision")
-        with self.transaction() as connection:
-            cursor = connection.cursor()
-            cursor.execute(
-                """INSERT INTO professional_admissions(professional_id, status, decided_by, decided_at)
-                   VALUES (%s, %s, %s, now())
-                   ON CONFLICT (professional_id) DO UPDATE SET status = EXCLUDED.status, decided_by = EXCLUDED.decided_by, decided_at = now()""",
-                (professional_id, status, actor),
-            )
-            self._audit(cursor, None, actor, f"professional.{status}", "professional", professional_id)
 
     def list_professional_admissions(self, status: str | None = None) -> list[dict[str, Any]]:
         with self.transaction() as connection:
@@ -682,10 +677,6 @@ class PostgresRepository:
                  "assessment_requests": row[8], "next_action": row[9]}
                 for row in cursor.fetchall()
             ]
-
-    def approve_professional(self, professional_id: str, actor: str) -> None:
-        """Compatibility wrapper for the original approval endpoint."""
-        self.decide_professional(professional_id, "approved", actor)
 
     def assign_work(self, package_id: UUID, professional_id: str, expires_at: datetime | None, actor: str) -> UUID:
         assignment_id = uuid4()

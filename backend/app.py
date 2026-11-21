@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend.admission import check_approval
 from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
 from backend.persistence import PersistenceConfigurationError, PostgresRepository
 
@@ -109,6 +110,8 @@ def identity(request: Request) -> Identity:
     """Use the synthetic adapter only in tests; otherwise validate Entra JWTs."""
     header = request.headers.get("authorization", "")
     if os.getenv("STUDIO_TEST_MODE", "false").lower() == "true":
+        if os.getenv("STUDIO_ENV", "development").strip().lower() in {"staging", "production"}:
+            raise HTTPException(status_code=503, detail="Synthetic authentication is disabled in deployed environments")
         if not header.startswith("Bearer test:"):
             raise HTTPException(status_code=401, detail="A workforce access token is required")
         parts = header.removeprefix("Bearer test:").split(":", 1)
@@ -335,6 +338,7 @@ class ProfessionalProfileUpdate(BaseModel):
 
 
 class AdmissionReviewUpdate(BaseModel):
+    reviewed_profile_version: int | None = Field(default=None, ge=1)
     status: Literal["under_review", "assessment", "approved", "declined", "revoked"]
     reason: str = Field(default="", max_length=4000)
     missing_information: list[str] = Field(default_factory=list, max_length=20)
@@ -375,7 +379,12 @@ def ready() -> dict:
 @app.get("/api/me")
 def me(request: Request) -> dict:
     actor = identity(request)
-    return {"id": actor.actor_id, "roles": sorted(actor.roles), "authentication": "synthetic-test"}
+    result = {"id": actor.actor_id, "roles": sorted(actor.roles), "authentication": "synthetic-test" if os.getenv("STUDIO_TEST_MODE", "").lower() == "true" else "entra"}
+    if "professional" in actor.roles:
+        application = (postgres_repository().get_professional_application(actor.actor_id) if postgres_mode()
+                       else store.professional_admissions.get(actor.actor_id))
+        result["admission_status"] = application["status"] if application else None
+    return result
 
 
 @app.post("/api/organizations", status_code=status.HTTP_201_CREATED)
@@ -469,6 +478,7 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
 @app.post("/api/professionals/{professional_id}/application", status_code=status.HTTP_201_CREATED)
 def submit_professional_application(professional_id: str, request: Request) -> dict:
     actor = identity(request)
+    require_global(actor, "professional", "admin")
     if actor.actor_id != professional_id and "admin" not in actor.roles:
         raise HTTPException(status_code=403, detail="A professional may submit only their own application")
     if postgres_mode():
@@ -602,11 +612,19 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
             return postgres_repository().review_professional_admission(
                 professional_id, body.model_dump(exclude_none=True), actor.actor_id
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     record = store.professional_admissions.get(professional_id)
     if not record:
         raise HTTPException(status_code=404, detail="Professional application not found")
+    if body.status == "approved":
+        try:
+            check_approval(record, store.professional_profiles.get(professional_id),
+                           body.model_dump(), professional_id, actor.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     record = {
         **record,
         "status": body.status,
@@ -623,46 +641,16 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
         store.approved_professionals.add(professional_id)
     else:
         store.approved_professionals.discard(professional_id)
-    audit_response(actor, "professional_admission", professional_id, f"professional.admission_{body.status}")
+    store.event(actor, f"professional.admission_{body.status}", "professional_admission", professional_id,
+                {"reason": body.reason, "reviewed_profile_version": body.reviewed_profile_version})
     return record
 
 
 @app.post("/api/professionals/{professional_id}/decision")
-def decide_professional(professional_id: str, body: Decision, request: Request) -> dict:
-    actor = identity(request)
-    require_global(actor, "admin")
-    if body.decision not in {"approved", "rejected"}:
-        raise HTTPException(status_code=422, detail="Professional decisions must be approved or rejected")
-    if postgres_mode():
-        postgres_repository().decide_professional(professional_id, body.decision, actor.actor_id)
-        return {"professional_id": professional_id, "status": body.decision}
-    if body.decision == "approved":
-        store.approved_professionals.add(professional_id)
-    else:
-        store.approved_professionals.discard(professional_id)
-    created_at = store.professional_admissions.get(professional_id, {}).get("created_at", now())
-    store.professional_admissions[professional_id] = {
-        "professional_id": professional_id,
-        "status": body.decision,
-        "decided_by": actor.actor_id,
-        "decided_at": now(),
-        "created_at": created_at,
-    }
-    audit_response(actor, "professional", professional_id, f"professional.{body.decision}")
-    return {"professional_id": professional_id, "status": body.decision}
-
-
 @app.post("/api/professionals/{professional_id}/approve")
-def approve_professional(professional_id: str, request: Request) -> dict:
-    """Compatibility endpoint retained for existing synthetic clients."""
-    actor = identity(request)
-    require_global(actor, "admin")
-    if postgres_mode():
-        postgres_repository().approve_professional(professional_id, actor.actor_id)
-        return {"professional_id": professional_id, "status": "approved"}
-    store.approved_professionals.add(professional_id)
-    audit_response(actor, "professional", professional_id, "professional.approved")
-    return {"professional_id": professional_id, "status": "approved"}
+def retired_admission_decision(professional_id: str, request: Request) -> None:
+    require_global(identity(request), "admin")
+    raise HTTPException(status_code=410, detail="Record a reasoned decision in the application review workspace")
 
 
 @app.post("/api/engagements", status_code=status.HTTP_201_CREATED)
@@ -724,7 +712,8 @@ def admin_overview(request: Request) -> dict:
             "deliverable_count": len(deliverables),
             "awaiting_review": sum(item["status"] == "under_review" for item in deliverables),
         })
-    applications = list(store.professional_admissions.values())
+    applications = [{**item, "display_name": store.professional_profiles.get(item["professional_id"], {}).get("display_name")}
+                    for item in store.professional_admissions.values()]
     open_opportunities = [item for item in store.opportunities.values() if item["status"] == "published"]
     active_assignments = [item for item in store.assignments.values() if item["status"] == "accepted"]
     pending_reviews = [item for item in store.deliverables.values() if item["status"] == "under_review"]
