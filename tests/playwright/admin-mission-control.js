@@ -40,7 +40,7 @@ async function main() {
     }
 
     await page.click('[data-view="admin-projects"]');
-    await page.fill("#admin-project-search", "Persistent");
+    await page.fill("#admin-project-search", "Synthetic");
     await page.selectOption("#admin-project-status", "completed");
     await page.selectOption("#admin-project-sort", "name");
     assert.ok((await page.locator("#admin-project-list .admin-card").count()) > 0);

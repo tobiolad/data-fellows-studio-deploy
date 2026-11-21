@@ -8,10 +8,10 @@ live Azure deployment or Entra sign-in has been executed.
 | --- | --- | --- |
 | Admin Portal | Implemented and tested | Mission Control Playwright smoke and API authorization tests pass. |
 | Professional Portal | Implemented and tested | Assignment, opportunity, deliverable and review flows pass synthetic walkthrough. |
-| Professional profile and onboarding | Implemented in focused reuse increment | `professional_profiles` migration, own/admin API, version checks, audit event, and synthetic Playwright evidence. Add admin evidence review and private scanner-backed uploads before real applications. |
+| Professional profile and onboarding | Implemented and tested (synthetic) | `professional_profiles` plus migration 008, distinct view/edit UI, structured repeatable fields, optimistic version checks, reviewer admission states, audit events, evidence-reference guard, and Playwright desktop/mobile evidence. Private scanner-backed uploads remain a staging gate. |
 | Client Portal | Implemented and tested | Approved-only deliverables, revision/acceptance, mobile screenshot and project messaging pass. |
 | AI orchestration | Implemented and tested (synthetic) | Deterministic bounded planner and independent approval pass; live provider disabled. |
-| Database | Implemented and tested | Versioned migrations 001-007, transaction repository and PostgreSQL integration pass when the configured test database is available. |
+| Database | Implemented and tested | Versioned migrations 001-008, transaction repository and isolated PostgreSQL integration pass with `STUDIO_TEST_DATABASE_URL`; local default runs skip the six external-database tests when the variable is absent. |
 | Authorization | Implemented and tested locally | Cross-organization, revoked-access and self-approval negatives pass; Entra validation remains external. |
 | BizPilot integration | Partially implemented | Handoff contracts exist in BizPilot; live Studio receiver and service identity are not connected. |
 | HubSpot | Not implemented | Keep CRM authoritative; add an approved adapter only when credentials and scope are approved. |

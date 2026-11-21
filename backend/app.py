@@ -329,8 +329,17 @@ class ProfessionalProfileUpdate(BaseModel):
     education: list[dict[str, str]] = Field(default_factory=list, max_length=10)
     experience: list[dict[str, str]] = Field(default_factory=list, max_length=15)
     portfolio: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+    evidence_references: list[dict[str, str]] = Field(default_factory=list, max_length=20)
     availability: str = Field(default="", max_length=120)
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class AdmissionReviewUpdate(BaseModel):
+    status: Literal["under_review", "assessment", "approved", "declined", "revoked"]
+    reason: str = Field(default="", max_length=4000)
+    missing_information: list[str] = Field(default_factory=list, max_length=20)
+    assessment_requests: list[dict[str, str]] = Field(default_factory=list, max_length=10)
+    next_action: str = Field(default="", max_length=1000)
 
 
 def audit_response(actor: Identity, resource_type: str, resource_id: str, action: str, organization_id: str | None = None) -> None:
@@ -464,17 +473,24 @@ def submit_professional_application(professional_id: str, request: Request) -> d
         raise HTTPException(status_code=403, detail="A professional may submit only their own application")
     if postgres_mode():
         postgres_repository().submit_professional_application(professional_id, actor.actor_id)
-        return {"professional_id": professional_id, "status": "pending"}
+        return {"professional_id": professional_id, "status": "submitted"}
     store.approved_professionals.discard(professional_id)
     store.professional_admissions[professional_id] = {
         "professional_id": professional_id,
-        "status": "pending",
+        "status": "submitted",
         "decided_by": None,
         "decided_at": None,
+        "submitted_at": now(),
+        "reviewed_at": None,
+        "decision_reason": "",
+        "missing_information": [],
+        "assessment_requests": [],
+        "evidence_references": [],
+        "next_action": "Awaiting admission review",
         "created_at": now(),
     }
     store.event(actor, "professional.application_submitted", "professional", professional_id)
-    return {"professional_id": professional_id, "status": "pending"}
+    return {"professional_id": professional_id, "status": "submitted"}
 
 
 @app.get("/api/professionals/{professional_id}/application")
@@ -495,7 +511,7 @@ def _profile_access(actor: Identity, professional_id: str) -> None:
     """Profiles are private to the professional and authorized admission staff."""
     if actor.actor_id == professional_id and "professional" in actor.roles:
         return
-    if "admin" in actor.roles:
+    if actor.roles.intersection({"admin", "reviewer"}):
         return
     raise HTTPException(status_code=403, detail="Professional profile access is not authorized")
 
@@ -525,6 +541,12 @@ def update_professional_profile(professional_id: str, body: ProfessionalProfileU
     actor = identity(request)
     _profile_access(actor, professional_id)
     payload = body.model_dump(exclude_none=True)
+    for evidence in payload.get("evidence_references", []):
+        reference = evidence.get("reference", "").strip()
+        if reference and not reference.startswith(("private://", "quarantine://", "pending://")):
+            raise HTTPException(status_code=422, detail="Evidence references must use private, quarantine, or pending storage schemes")
+        if any(key not in {"label", "reference", "classification", "status"} for key in evidence):
+            raise HTTPException(status_code=422, detail="Evidence references contain unsupported metadata")
     expected_version = payload.pop("expected_version", None)
     if postgres_mode():
         try:
@@ -554,7 +576,7 @@ def update_professional_profile(professional_id: str, body: ProfessionalProfileU
 @app.get("/api/professionals/admissions")
 def list_professional_admissions(
     request: Request,
-    status_filter: Literal["pending", "approved", "rejected", "revoked"] | None = None,
+    status_filter: Literal["draft", "submitted", "under_review", "assessment", "pending", "approved", "declined", "rejected", "revoked"] | None = None,
 ) -> list[dict]:
     actor = identity(request)
     require_global(actor, "admin")
@@ -564,6 +586,45 @@ def list_professional_admissions(
     if status_filter:
         records = [record for record in records if record["status"] == status_filter]
     return sorted(records, key=lambda record: (record["created_at"], record["professional_id"]))
+
+
+@app.post("/api/professionals/{professional_id}/review")
+def review_professional_admission(professional_id: str, body: AdmissionReviewUpdate, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin", "reviewer")
+    for reference in body.assessment_requests:
+        if not reference.get("title", "").strip():
+            raise HTTPException(status_code=422, detail="Assessment requests require a title")
+    if body.status in {"approved", "declined", "revoked"} and not body.reason.strip():
+        raise HTTPException(status_code=422, detail="A decision reason is required for terminal admission decisions")
+    if postgres_mode():
+        try:
+            return postgres_repository().review_professional_admission(
+                professional_id, body.model_dump(exclude_none=True), actor.actor_id
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    record = store.professional_admissions.get(professional_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Professional application not found")
+    record = {
+        **record,
+        "status": body.status,
+        "decided_by": actor.actor_id if body.status in {"approved", "declined", "revoked"} else record.get("decided_by"),
+        "decided_at": now() if body.status in {"approved", "declined", "revoked"} else record.get("decided_at"),
+        "reviewed_at": now(),
+        "decision_reason": body.reason,
+        "missing_information": body.missing_information,
+        "assessment_requests": body.assessment_requests,
+        "next_action": body.next_action,
+    }
+    store.professional_admissions[professional_id] = record
+    if body.status == "approved":
+        store.approved_professionals.add(professional_id)
+    else:
+        store.approved_professionals.discard(professional_id)
+    audit_response(actor, "professional_admission", professional_id, f"professional.admission_{body.status}")
+    return record
 
 
 @app.post("/api/professionals/{professional_id}/decision")
@@ -686,7 +747,7 @@ def admin_overview(request: Request) -> dict:
             "active_projects": sum(item["status"] == "active" for item in store.projects.values()),
             "awaiting_review": len(pending_reviews),
             "client_approvals_pending": sum(item["status"] == "approved" for item in store.deliverables.values()),
-            "pending_applications": sum(item["status"] == "pending" for item in applications),
+            "pending_applications": sum(item["status"] in {"pending", "submitted", "under_review", "assessment"} for item in applications),
             "open_opportunities": len(open_opportunities),
             "active_assignments": len(active_assignments),
             "ai_pending_approval": len(pending_ai),

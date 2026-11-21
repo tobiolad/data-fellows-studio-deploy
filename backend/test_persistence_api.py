@@ -19,6 +19,7 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         os.environ["STUDIO_PERSISTENCE"] = "postgres"
         os.environ["STUDIO_DATABASE_URL"] = os.environ["STUDIO_TEST_DATABASE_URL"]
         app_module.postgres_repository.cache_clear()
+        app_module.postgres_repository().migrate()
         self.client = TestClient(app)
         self.admin = auth("postgres-admin", "admin")
 
@@ -192,16 +193,20 @@ class PostgresApiIntegrationTests(unittest.TestCase):
     def test_professional_profile_persists_and_is_version_checked(self) -> None:
         application = self.client.post("/api/professionals/postgres-profile/application", headers=auth("postgres-profile", "professional"))
         self.assertEqual(application.status_code, 201)
-        payload = {"display_name": "Persistent profile", "headline": "Synthetic analyst", "bio": "Profile evidence", "skills": ["SQL"], "specializations": ["Operations"], "education": [], "experience": [], "portfolio": [], "availability": "Part time"}
+        payload = {"display_name": "Persistent profile", "headline": "Synthetic analyst", "bio": "Profile evidence", "skills": ["SQL"], "specializations": ["Operations"], "education": [], "experience": [], "portfolio": [], "evidence_references": [{"label": "Synthetic CV", "reference": "quarantine://synthetic/profile/cv", "classification": "application"}], "availability": "Part time"}
         saved = self.client.put("/api/professionals/postgres-profile/profile", headers=auth("postgres-profile", "professional"), json=payload)
         self.assertEqual(saved.status_code, 200, saved.text)
         self.assertEqual(saved.json()["version"], 1)
         loaded = self.client.get("/api/professionals/postgres-profile/profile", headers=auth("postgres-profile", "professional"))
         self.assertEqual(loaded.status_code, 200)
         self.assertEqual(loaded.json()["display_name"], "Persistent profile")
+        self.assertEqual(loaded.json()["evidence_references"][0]["reference"], "quarantine://synthetic/profile/cv")
         self.assertEqual(self.client.get("/api/professionals/postgres-profile/profile", headers=auth("postgres-other", "professional")).status_code, 403)
         stale = self.client.put("/api/professionals/postgres-profile/profile", headers=auth("postgres-profile", "professional"), json={**payload, "expected_version": 99})
         self.assertEqual(stale.status_code, 409)
+        review = self.client.post("/api/professionals/postgres-profile/review", headers=auth("postgres-reviewer", "reviewer"), json={"status": "under_review", "next_action": "Review synthetic evidence"})
+        self.assertEqual(review.status_code, 200)
+        self.assertEqual(review.json()["status"], "under_review")
 
 
 if __name__ == "__main__":

@@ -182,8 +182,8 @@ class PostgresRepository:
                             LEFT JOIN work_packages w ON w.project_id = p.id LEFT JOIN deliverables d ON d.work_package_id = w.id
                             GROUP BY p.id, e.name, o.name ORDER BY p.created_at DESC""")
             projects = [{"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4], "engagement_name": row[5], "organization_name": row[6], "work_package_count": row[7], "deliverable_count": row[8], "awaiting_review": row[9]} for row in cursor.fetchall()]
-            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at FROM professional_admissions ORDER BY created_at DESC")
-            applications = [{"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]} for row in cursor.fetchall()]
+            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at, decision_reason, missing_information, assessment_requests, next_action FROM professional_admissions ORDER BY created_at DESC")
+            applications = [{"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4], "reviewed_at": row[5], "decision_reason": row[6], "missing_information": row[7], "assessment_requests": row[8], "next_action": row[9]} for row in cursor.fetchall()]
             cursor.execute("SELECT id, title, summary, specialization, skills, compensation, deadline, status, created_at FROM opportunities WHERE status = 'published' ORDER BY created_at DESC")
             opportunities = [{"id": str(row[0]), "title": row[1], "summary": row[2], "specialization": row[3], "skills": row[4], "compensation": row[5], "deadline": row[6], "status": row[7], "created_at": row[8]} for row in cursor.fetchall()]
             cursor.execute("""SELECT d.id, d.work_package_id, d.version, d.title, d.submitted_by, d.status, d.created_at, p.name, e.name, o.name
@@ -209,7 +209,7 @@ class PostgresRepository:
                 "active_projects": sum(item["status"] == "active" for item in projects),
                 "awaiting_review": sum(item["status"] == "under_review" for item in deliverables),
                 "client_approvals_pending": sum(item["status"] == "approved" for item in deliverables),
-                "pending_applications": sum(item["status"] == "pending" for item in applications),
+                "pending_applications": sum(item["status"] in {"pending", "submitted", "under_review", "assessment"} for item in applications),
                 "open_opportunities": len(opportunities),
                 "active_assignments": self._count_active_assignments(cursor),
                 "ai_pending_approval": pending_ai_approvals,
@@ -536,10 +536,12 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
-                """INSERT INTO professional_admissions(professional_id, status)
-                   VALUES (%s, 'pending')
+                """INSERT INTO professional_admissions(professional_id, status, submitted_at)
+                   VALUES (%s, 'submitted', now())
                    ON CONFLICT (professional_id) DO UPDATE
-                   SET status = 'pending', decided_by = NULL, decided_at = NULL""",
+                   SET status = 'submitted', submitted_at = now(), reviewed_at = NULL,
+                       decided_by = NULL, decided_at = NULL, decision_reason = '',
+                       missing_information = '[]'::jsonb, assessment_requests = '[]'::jsonb, next_action = ''""",
                 (professional_id,),
             )
             self._audit(cursor, None, actor, "professional.application_submitted", "professional", professional_id)
@@ -547,11 +549,17 @@ class PostgresRepository:
     def get_professional_application(self, professional_id: str) -> dict[str, Any] | None:
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT professional_id, status, decided_by, decided_at, created_at FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            cursor.execute("""SELECT professional_id, status, decided_by, decided_at, created_at,
+                                    submitted_at, reviewed_at, decision_reason, missing_information,
+                                    assessment_requests, evidence_references, next_action
+                             FROM professional_admissions WHERE professional_id = %s""", (professional_id,))
             row = cursor.fetchone()
             if row is None:
                 return None
-            return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]}
+            return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
+                    "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7],
+                    "missing_information": row[8], "assessment_requests": row[9],
+                    "evidence_references": row[10], "next_action": row[11]}
 
     def get_professional_profile(self, professional_id: str) -> dict[str, Any] | None:
         with self.transaction() as connection:
@@ -562,7 +570,7 @@ class PostgresRepository:
                 raise LookupError("Professional application not found")
             cursor.execute(
                 """SELECT professional_id, display_name, headline, bio, skills, specializations,
-                          education, experience, portfolio, availability, version, updated_at
+                          education, experience, portfolio, availability, evidence_references, version, updated_at
                    FROM professional_profiles WHERE professional_id = %s""",
                 (professional_id,),
             )
@@ -572,7 +580,7 @@ class PostgresRepository:
             return {
                 "professional_id": row[0], "display_name": row[1], "headline": row[2], "bio": row[3],
                 "skills": row[4], "specializations": row[5], "education": row[6], "experience": row[7],
-                "portfolio": row[8], "availability": row[9], "version": row[10], "updated_at": row[11],
+                "portfolio": row[8], "availability": row[9], "evidence_references": row[10], "version": row[11], "updated_at": row[12],
                 "application_status": admission[0],
             }
 
@@ -591,20 +599,53 @@ class PostgresRepository:
             version = current_version + 1
             cursor.execute(
                 """INSERT INTO professional_profiles
-                   (professional_id, display_name, headline, bio, skills, specializations, education, experience, portfolio, availability, version, updated_at)
-                   VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, now())
+                   (professional_id, display_name, headline, bio, skills, specializations, education, experience, portfolio, availability, evidence_references, version, updated_at)
+                   VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, now())
                    ON CONFLICT (professional_id) DO UPDATE SET display_name = EXCLUDED.display_name,
                      headline = EXCLUDED.headline, bio = EXCLUDED.bio, skills = EXCLUDED.skills,
                      specializations = EXCLUDED.specializations, education = EXCLUDED.education,
                      experience = EXCLUDED.experience, portfolio = EXCLUDED.portfolio,
-                     availability = EXCLUDED.availability, version = EXCLUDED.version, updated_at = now()""",
+                     availability = EXCLUDED.availability, evidence_references = EXCLUDED.evidence_references,
+                     version = EXCLUDED.version, updated_at = now()""",
                 (professional_id, payload["display_name"], payload.get("headline", ""), payload.get("bio", ""),
                  json.dumps(payload.get("skills", [])), json.dumps(payload.get("specializations", [])),
                  json.dumps(payload.get("education", [])), json.dumps(payload.get("experience", [])),
-                 json.dumps(payload.get("portfolio", [])), payload.get("availability", ""), version),
+                 json.dumps(payload.get("portfolio", [])), payload.get("availability", ""),
+                 json.dumps(payload.get("evidence_references", [])), version),
             )
             self._audit(cursor, None, actor, "professional_profile.updated", "professional_profile", professional_id, {"version": version})
             return {**payload, "professional_id": professional_id, "version": version, "application_status": admission[0]}
+
+    def review_professional_admission(self, professional_id: str, review: dict[str, Any], actor: str) -> dict[str, Any]:
+        """Record an independent admission review with explicit, auditable state."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT professional_id, created_at FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            existing = cursor.fetchone()
+            if existing is None:
+                raise LookupError("Professional application not found")
+            terminal = review["status"] in {"approved", "declined", "revoked"}
+            cursor.execute(
+                """UPDATE professional_admissions
+                   SET status = %s, reviewed_at = now(),
+                       decided_by = CASE WHEN %s THEN %s ELSE decided_by END,
+                       decided_at = CASE WHEN %s THEN now() ELSE decided_at END,
+                       decision_reason = %s, missing_information = %s::jsonb,
+                       assessment_requests = %s::jsonb, next_action = %s
+                   WHERE professional_id = %s
+                   RETURNING professional_id, status, decided_by, decided_at, created_at,
+                             submitted_at, reviewed_at, decision_reason, missing_information,
+                             assessment_requests, evidence_references, next_action""",
+                (review["status"], terminal, actor, terminal, review.get("reason", ""),
+                 json.dumps(review.get("missing_information", [])), json.dumps(review.get("assessment_requests", [])),
+                 review.get("next_action", ""), professional_id),
+            )
+            row = cursor.fetchone()
+            self._audit(cursor, None, actor, f"professional.admission_{review['status']}", "professional_admission", professional_id,
+                        {"reason": review.get("reason", ""), "missing_information_count": len(review.get("missing_information", []))})
+            return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
+                    "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7], "missing_information": row[8],
+                    "assessment_requests": row[9], "evidence_references": row[10], "next_action": row[11]}
 
     def decide_professional(self, professional_id: str, status: str, actor: str) -> None:
         if status not in {"approved", "rejected", "revoked"}:
@@ -624,17 +665,21 @@ class PostgresRepository:
             cursor = connection.cursor()
             if status:
                 cursor.execute(
-                    """SELECT professional_id, status, decided_by, decided_at, created_at
+                    """SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at,
+                                      decision_reason, missing_information, assessment_requests, next_action
                        FROM professional_admissions WHERE status = %s ORDER BY created_at, professional_id""",
                     (status,),
                 )
             else:
                 cursor.execute(
-                    """SELECT professional_id, status, decided_by, decided_at, created_at
+                    """SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at,
+                                      decision_reason, missing_information, assessment_requests, next_action
                        FROM professional_admissions ORDER BY created_at, professional_id"""
                 )
             return [
-                {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4]}
+                {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
+                 "reviewed_at": row[5], "decision_reason": row[6], "missing_information": row[7],
+                 "assessment_requests": row[8], "next_action": row[9]}
                 for row in cursor.fetchall()
             ]
 

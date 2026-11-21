@@ -203,7 +203,7 @@ class StudioLifecycleTests(unittest.TestCase):
     def test_admission_queue_is_admin_only_and_tracks_decisions(self) -> None:
         submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)
         self.assertEqual(submitted.status_code, 201)
-        pending = self.client.get("/api/professionals/admissions?status_filter=pending", headers=self.admin)
+        pending = self.client.get("/api/professionals/admissions?status_filter=submitted", headers=self.admin)
         self.assertEqual(pending.status_code, 200)
         self.assertEqual(pending.json()[0]["professional_id"], "professional-1")
         self.assertEqual(self.client.get("/api/professionals/admissions", headers=self.professional).status_code, 403)
@@ -229,17 +229,39 @@ class StudioLifecycleTests(unittest.TestCase):
         saved = self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json=profile)
         self.assertEqual(saved.status_code, 200, saved.text)
         self.assertEqual(saved.json()["version"], 1)
-        self.assertEqual(saved.json()["application_status"], "pending")
+        self.assertEqual(saved.json()["application_status"], "submitted")
         loaded = self.client.get("/api/professionals/professional-1/profile", headers=self.professional)
         self.assertEqual(loaded.status_code, 200)
         self.assertEqual(loaded.json()["skills"], ["Python", "Data quality"])
         self.assertEqual(self.client.get("/api/professionals/professional-1/profile", headers=self.client_user).status_code, 403)
         stale = self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json={**profile, "expected_version": 99})
         self.assertEqual(stale.status_code, 409)
-        self.assertEqual(self.client.get("/api/professionals/admissions?status_filter=pending", headers=self.admin).json()[0]["status"], "pending")
+        self.assertEqual(self.client.get("/api/professionals/admissions?status_filter=submitted", headers=self.admin).json()[0]["status"], "submitted")
         self.assertIn("professional_profile.updated", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
         self.client.post("/api/professionals/professional-1/decision", headers=self.admin, json={"decision": "approved"})
         self.assertEqual(self.client.get("/api/professionals/professional-1/profile", headers=self.professional).json()["application_status"], "approved")
+
+    def test_admission_review_is_independent_from_profile_completeness_and_audited(self) -> None:
+        self.client.post("/api/professionals/professional-1/application", headers=self.professional)
+        profile = {"display_name": "Alex Johnson", "headline": "Automation specialist", "bio": "Synthetic biography", "skills": ["Python"], "specializations": ["Operations"], "education": [], "experience": [], "portfolio": [], "availability": "Available"}
+        self.assertEqual(self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json=profile).status_code, 200)
+        review = self.client.post("/api/professionals/professional-1/review", headers=self.admin, json={"status": "under_review", "next_action": "Provide one assessment example"})
+        self.assertEqual(review.status_code, 200)
+        self.assertEqual(review.json()["status"], "under_review")
+        assessment = self.client.post("/api/professionals/professional-1/review", headers=auth("reviewer-1", "reviewer"), json={"status": "assessment", "assessment_requests": [{"title": "Synthetic assessment", "description": "Submit a short example"}], "next_action": "Complete assessment"})
+        self.assertEqual(assessment.status_code, 200)
+        approved = self.client.post("/api/professionals/professional-1/review", headers=auth("reviewer-1", "reviewer"), json={"status": "approved", "reason": "Evidence reviewed by an independent reviewer"})
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json()["status"], "approved")
+        self.assertIn("professional.admission_approved", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
+
+    def test_public_evidence_references_are_rejected(self) -> None:
+        self.client.post("/api/professionals/professional-1/application", headers=self.professional)
+        payload = {"display_name": "Alex Johnson", "headline": "Automation specialist", "bio": "Synthetic biography", "evidence_references": [{"label": "CV", "reference": "https://example.test/cv.pdf"}]}
+        response = self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json=payload)
+        self.assertEqual(response.status_code, 422)
+        payload["evidence_references"][0]["reference"] = "quarantine://synthetic/profile/cv.pdf"
+        self.assertEqual(self.client.put("/api/professionals/professional-1/profile", headers=self.professional, json=payload).status_code, 200)
 
     def test_opportunity_board_requires_approval_and_preserves_interest_review(self) -> None:
         blocked = self.client.get("/api/opportunities", headers=self.professional)

@@ -16,3 +16,14 @@ Production rules:
 ## 007 professional profiles
 
 `007_professional_profiles.sql` adds a profile draft keyed to an existing admission. JSON arrays hold bounded, structured education, experience and portfolio references; `version` and `updated_at` support optimistic edits. The admission row remains the source of vetting status and is never changed by profile writes. Apply migrations lexically with the existing checksum-verified runner.
+
+## 008 professional admission review
+
+`008_professional_admission_review.sql` extends admission records with the explicit
+`submitted`, `under_review`, `assessment`, `approved`, `declined` and `revoked`
+states, review reasons, missing-information items, assessment requests, next
+actions and evidence-reference metadata. Legacy `pending` and `rejected` values
+remain accepted for compatibility with older synthetic records. It also adds
+metadata-only evidence references to profiles. References must use a private,
+quarantine or pending storage scheme; this migration does not create a public
+upload path or accept file bytes.
