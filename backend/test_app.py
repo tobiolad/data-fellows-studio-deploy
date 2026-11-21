@@ -222,6 +222,14 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["persistence"], "postgres")
 
+    def test_localhost_and_loopback_frontend_origins_support_preflight(self) -> None:
+        response = self.client.options(
+            "/api/organizations",
+            headers={"Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "POST"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173")
+
     def test_entra_enabled_requests_use_validator_boundary(self) -> None:
         class FakeValidator:
             def validate(self, token: str) -> Principal:

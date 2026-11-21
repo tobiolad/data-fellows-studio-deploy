@@ -80,7 +80,12 @@ store = Store()
 app = FastAPI(title="Data Fellows Studio", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8100"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:8100",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8100",
+    ],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
