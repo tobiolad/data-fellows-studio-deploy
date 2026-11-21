@@ -32,6 +32,42 @@ interaction vocabulary.
   drawer or detail route. UUIDs stay in API payloads, not in navigation controls.
 - Motion is limited to 150–250ms state feedback and respects `prefers-reduced-motion`.
 
+## Colors
+
+- `--df-bg` is the cool application background; `--df-surface` is the raised panel; `--df-line`
+  is the quiet border.
+- `--df-ink` is primary text, `--df-ink-secondary` is readable supporting text and
+  `--df-ink-muted` is reserved for non-essential metadata.
+- `--df-blue` and `--df-blue-strong` are the only action/selection accents. Green, amber and red
+  are semantic state colors only.
+- Text on every status surface must meet WCAG AA. Do not use blue or gray text on a tinted surface
+  unless the contrast is checked at the actual rendered size.
+
+## Typography
+
+- Use the existing system sans stack for the product UI; typography should feel familiar and
+  quiet in dense operational screens.
+- Headings use a compact stepped scale: page title, section title, card title, body, metadata.
+- Body and functional text are at least 12px. Labels are sentence case, never decorative tracked
+  capitals. Numeric metrics use tabular alignment where available.
+- Keep line length readable in explanations and use `overflow-wrap: break-word` for user-provided
+  names, project titles and evidence labels.
+
+## Components
+
+- **Navigation:** persistent desktop sidebar; horizontally scrollable, clearly selected mobile
+  navigation; active state is blue with a visible focus ring.
+- **Panels and cards:** one surface per information group, 12px radius, quiet border, no nested
+  decorative cards. Cards expose a concise summary and progressive detail action.
+- **Buttons:** royal blue for the one primary action, outlined secondary actions, and disabled
+  states that remain legible. Every action reports success or failure in the live status region.
+- **Tables:** readable headings, sortable/filterable controls, human labels, and horizontal
+  scrolling on narrow screens with no data loss.
+- **Status indicators:** text plus color; status words remain visible to color-blind users.
+- **Empty/loading/error states:** explain what is unavailable, why, and the next authorized action.
+- **Dialogs/drawers:** keyboard closable, focus-visible, and used only for progressive detail or
+  consequential confirmation.
+
 ## Review workflow
 
 1. Use `$impeccable critique` or `$impeccable audit` on one surface at a time.
