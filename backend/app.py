@@ -515,6 +515,8 @@ def get_professional_profile(professional_id: str, request: Request) -> dict:
         record = store.professional_profiles.get(professional_id)
     if not record:
         raise HTTPException(status_code=404, detail="Professional profile has not been started")
+    if not postgres_mode():
+        record = {**record, "application_status": store.professional_admissions[professional_id]["status"]}
     return record
 
 

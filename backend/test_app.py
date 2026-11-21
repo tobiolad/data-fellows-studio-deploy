@@ -238,6 +238,8 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(self.client.get("/api/professionals/admissions?status_filter=pending", headers=self.admin).json()[0]["status"], "pending")
         self.assertIn("professional_profile.updated", {event["action"] for event in self.client.get("/api/audit", headers=self.admin).json()})
+        self.client.post("/api/professionals/professional-1/decision", headers=self.admin, json={"decision": "approved"})
+        self.assertEqual(self.client.get("/api/professionals/professional-1/profile", headers=self.professional).json()["application_status"], "approved")
 
     def test_opportunity_board_requires_approval_and_preserves_interest_review(self) -> None:
         blocked = self.client.get("/api/opportunities", headers=self.professional)
