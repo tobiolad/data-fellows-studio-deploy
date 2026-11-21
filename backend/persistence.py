@@ -195,6 +195,10 @@ class PostgresRepository:
                             FROM ai_runs r JOIN work_packages w ON w.id = r.work_package_id JOIN projects p ON p.id = w.project_id
                             JOIN engagements e ON e.id = p.engagement_id ORDER BY r.created_at DESC""")
             ai_runs = [{"id": str(row[0]), "work_package_id": str(row[1]), "requested_by": row[2], "agent_version": row[3], "policy_version": row[4], "budget_cents": row[5], "spent_cents": row[6], "status": row[7], "cancel_requested": row[8], "error_code": row[9], "created_at": row[10], "work_package_title": row[11], "project_name": row[12], "engagement_name": row[13]} for row in cursor.fetchall()]
+            cursor.execute("SELECT run_id, status FROM artifacts WHERE version = (SELECT MAX(a2.version) FROM artifacts a2 WHERE a2.run_id = artifacts.run_id)")
+            artifact_status = {str(row[0]): row[1] for row in cursor.fetchall()}
+            for run in ai_runs:
+                run["artifact_status"] = artifact_status.get(run["id"])
             cursor.execute("SELECT organization_id, actor_id, action, resource_type, resource_id, metadata, created_at FROM audit_events ORDER BY created_at DESC LIMIT 25")
             audit = [{"organization_id": None if row[0] is None else str(row[0]), "actor_id": row[1], "action": row[2], "resource_type": row[3], "resource_id": row[4], "metadata": row[5], "created_at": row[6]} for row in cursor.fetchall()]
             cursor.execute("SELECT COUNT(*) FROM artifacts WHERE status = 'pending_review'")
@@ -619,7 +623,7 @@ class PostgresRepository:
                 "artifact": None if artifact is None else {"id": str(artifact[0]), "version": artifact[1], "content": artifact[2], "status": artifact[3], "created_at": artifact[4]},
             }
 
-    def decide_ai_artifact(self, run_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
+    def decide_ai_artifact(self, run_id: UUID, reviewer_id: str, decision: str, comment: str, admin: bool = False) -> dict[str, Any]:
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
@@ -638,11 +642,12 @@ class PostgresRepository:
             artifact_id, artifact_status, run_status, requested_by, organization_id, content = row
             if requested_by == reviewer_id:
                 raise ValueError("Independent approval is required")
-            cursor.execute(
-                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL",
-                (organization_id, reviewer_id),
-            )
-            if cursor.fetchone() is None:
+            if not admin:
+                cursor.execute(
+                    "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL",
+                    (organization_id, reviewer_id),
+                )
+            if not admin and cursor.fetchone() is None:
                 raise PermissionError("Reviewer is not authorized for this organization")
             if run_status == "cancelled":
                 raise ValueError("Cancelled AI runs cannot be approved")

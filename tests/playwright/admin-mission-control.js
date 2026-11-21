@@ -34,6 +34,16 @@ async function main() {
       await page.screenshot({ path: `${ARTIFACTS}/${artifact}.png`, fullPage: true });
     }
 
+    await page.click('[data-view="admin-projects"]');
+    await page.fill("#admin-project-search", "Persistent");
+    await page.selectOption("#admin-project-status", "completed");
+    await page.selectOption("#admin-project-sort", "name");
+    assert.ok((await page.locator("#admin-project-list .admin-card").count()) > 0);
+    await page.locator("#admin-project-list .admin-detail-button").first().click();
+    await page.waitForSelector("#admin-detail-drawer:not([hidden])");
+    assert.match(await page.locator("#admin-drawer-content").innerText(), /PROJECT DETAIL/);
+    await page.click("#admin-drawer-close");
+
     await page.click('[data-view="admin-overview"]');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForSelector("#admin-overview-view.active-view");

@@ -546,7 +546,7 @@ def admin_overview(request: Request) -> dict:
         "opportunities": open_opportunities,
         "opportunity_interests": list(store.opportunity_interests.values()),
         "deliverables": list(store.deliverables.values()),
-        "ai_runs": list(store.ai_runs.values()),
+        "ai_runs": [{**item, "artifact_status": store.artifacts.get(item.get("artifact_id"), {}).get("status")} for item in store.ai_runs.values()],
         "audit": list(reversed(store.audit[-25:])),
         "metrics": {
             "active_engagements": sum(item["status"] in {"authorized", "active"} for item in store.engagements.values()),
@@ -967,7 +967,7 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     if postgres_mode():
         require_global(actor, "admin", "reviewer")
         try:
-            return postgres_repository().decide_ai_artifact(UUID(run_id), actor.actor_id, body.decision, body.comment)
+            return postgres_repository().decide_ai_artifact(UUID(run_id), actor.actor_id, body.decision, body.comment, admin="admin" in actor.roles)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except LookupError as exc:
