@@ -106,7 +106,7 @@ async function createProject() {
 
 async function createWorkPackage() {
   const title = document.querySelector("#package-title").value.trim();
-  const projectId = document.querySelector("#package-project").value.trim();
+  const projectId = document.querySelector("#project-id").value.trim();
   const criteria = document.querySelector("#package-criteria").value.trim();
   if (!projectId || !title || !criteria) return showMessage("Complete the project, title and acceptance criteria first.", "error");
   try {
