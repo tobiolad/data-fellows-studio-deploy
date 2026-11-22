@@ -50,6 +50,8 @@ class Store:
     deliverables: dict[str, dict] = field(default_factory=dict)
     reviews: dict[str, dict] = field(default_factory=dict)
     client_revision_requests: dict[str, dict] = field(default_factory=dict)
+    project_requests: dict[str, dict] = field(default_factory=dict)
+    handovers: dict[str, dict] = field(default_factory=dict)
     project_messages: dict[str, dict] = field(default_factory=dict)
     project_documents: dict[str, dict] = field(default_factory=dict)
     notifications: dict[str, dict] = field(default_factory=dict)
@@ -84,6 +86,8 @@ class Store:
         self.deliverables.clear()
         self.reviews.clear()
         self.client_revision_requests.clear()
+        self.project_requests.clear()
+        self.handovers.clear()
         self.project_messages.clear()
         self.project_documents.clear()
         self.notifications.clear()
@@ -329,7 +333,7 @@ class ProjectDocumentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     description: str = Field(default="", max_length=2000)
     classification: Literal["project", "deliverable", "support"] = "project"
-    storage_reference: str = Field(min_length=2, max_length=512)
+    storage_reference: str = Field(max_length=512, pattern=r"^(blob://private/|private://)[A-Za-z0-9_./-]+$")
 
 
 class OpportunityCreate(BaseModel):
@@ -845,6 +849,80 @@ def client_overview(request: Request) -> dict:
     return _memory_client_overview(actor)
 
 
+class ProjectRequestInput(BaseModel):
+    subject: str = Field(min_length=2, max_length=500, pattern=r"\S.*\S")
+
+
+class RequestDecision(BaseModel):
+    decision: Literal["approved", "declined"]
+    rationale: str = Field(min_length=2, max_length=1000, pattern=r"\S.*\S")
+
+
+@app.get("/api/projects/{project_id}/coordination")
+def project_coordination(project_id: UUID, request: Request) -> dict:
+    actor = identity(request)
+    if postgres_mode():
+        try:
+            return postgres_repository().project_coordination(project_id, actor.actor_id, "admin" in actor.roles)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    key = str(project_id)
+    _, _, roles = memory_project_access(actor, key)
+    if "admin" not in actor.roles and not roles.intersection({"owner", "client"}):
+        raise HTTPException(403, "Client project coordination access is required")
+    return {"requests": [row for row in reversed(store.project_requests.values()) if row["project_id"] == key],
+            "handover": store.handovers.get(key)}
+
+
+@app.post("/api/projects/{project_id}/requests", status_code=201)
+def open_project_request(project_id: UUID, body: ProjectRequestInput, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "client")
+    if postgres_mode():
+        try:
+            return postgres_repository().open_project_request(project_id, actor.actor_id, body.subject.strip())
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    key = str(project_id)
+    _, org, roles = memory_project_access(actor, key)
+    if "client" not in roles:
+        raise HTTPException(403, "Client membership is required")
+    row = {"id": str(uuid4()), "project_id": key, "subject": body.subject.strip(), "created_at": now(),
+           "decision": None, "rationale": None, "decided_at": None}
+    store.project_requests[row["id"]] = row
+    memory_notification(key, "internal", "project.request.opened", "Client request", "A client request needs a decision.")
+    audit_response(actor, "project_request", row["id"], "project.request.opened", org)
+    return {"id": row["id"]}
+
+
+@app.post("/api/projects/{project_id}/requests/{request_id}/decision")
+def decide_project_request(project_id: UUID, request_id: UUID, body: RequestDecision, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if postgres_mode():
+        try:
+            return postgres_repository().decide_project_request(project_id, request_id, actor.actor_id, body.decision, body.rationale.strip())
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    _, org, _ = memory_project_access(actor, str(project_id))
+    with _deliverable_lock:
+        row = store.project_requests.get(str(request_id))
+        if not row or row["project_id"] != str(project_id):
+            raise HTTPException(404, "Project request not found")
+        if row["decision"]:
+            raise HTTPException(409, "A decision has already been recorded")
+        row.update(decision=body.decision, rationale=body.rationale.strip(), decided_at=now())
+        memory_notification(str(project_id), "client", "project.request.decided", "Request decision", "Data Fellows responded to a request.")
+        audit_response(actor, "project_request", row["id"], "project.request.decided", org)
+        return {"id": row["id"], "decision": body.decision}
+
+
 @app.get("/api/projects/{project_id}/messages")
 def list_project_messages(project_id: str, request: Request) -> list[dict]:
     actor = identity(request)
@@ -1221,7 +1299,7 @@ def list_assignments(professional_id: str, request: Request) -> list[dict]:
                 continue
         project = store.projects.get(package.get("project_id"), {})
         engagement = store.engagements.get(project.get("engagement_id"), {})
-        result.append({**item, "title": package.get("title"), "project_name": project.get("name"), "engagement_name": engagement.get("name"), "objective": engagement.get("objective")})
+        result.append({**item, "title": package.get("title"), "project_id": project.get("id"), "project_name": project.get("name"), "engagement_name": engagement.get("name"), "objective": engagement.get("objective")})
     return result
 
 
@@ -1644,8 +1722,13 @@ def complete_project(project_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Project not found")
     org_id = organization_for_engagement(project["engagement_id"])
     member(actor, org_id, "owner")
-    if not any(d["status"] == "accepted" and store.work_packages[d["work_package_id"]]["project_id"] == project_id for d in store.deliverables.values()):
+    if project["status"] == "completed":
+        return project
+    versions = [{key: item[key] for key in ("id", "title", "version")} for item in store.deliverables.values()
+                if item["status"] == "accepted" and store.work_packages[item["work_package_id"]]["project_id"] == project_id]
+    if not versions:
         raise HTTPException(status_code=409, detail="At least one client-accepted deliverable is required")
+    store.handovers[project_id] = {"versions": versions, "created_at": now()}
     project["status"] = "completed"
     audit_response(actor, "project", project_id, "project.completed", org_id)
     return project

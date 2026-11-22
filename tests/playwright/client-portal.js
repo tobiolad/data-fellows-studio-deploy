@@ -67,7 +67,17 @@ async function main() {
     await page.click("#client-message-form button[type=submit]");
     await page.waitForTimeout(120);
     assert.match(await page.locator("#client-message-list").innerText(), /Please confirm the synthetic delivery window/);
-    assert.match(await page.locator("#client-activity-list").innerText(), /Project Message Sent/);
+    assert.match(await page.locator("#client-activity-list").innerText(), /Project Created/);
+    const requestSubject = "Confirm the reporting period";
+    await page.getByLabel("Request for Data Fellows").fill(requestSubject);
+    await page.getByRole("button", {name: "Submit request"}).click();
+    await page.getByText(requestSubject, {exact: true}).waitFor();
+    const records = (await api(clientId, "client", `/api/projects/${project.id}/coordination`)).body;
+    assert.equal(records.requests[0].subject, requestSubject);
+    await post("admin-1", "admin", `/api/projects/${project.id}/requests/${records.requests[0].id}/decision`,
+      {decision: "approved", rationale: "Use the agreed quarterly reporting period."});
+    await page.locator("#client-message-project").dispatchEvent("change");
+    await page.getByText("Use the agreed quarterly reporting period.", {exact: true}).waitFor();
     await page.screenshot({ path: `${ARTIFACTS}/client-portal-communications-1440.png`, fullPage: true });
     await page.click('[data-view="client-deliverables"]');
     await page.waitForSelector("#client-deliverables-list .client-deliverable-card");

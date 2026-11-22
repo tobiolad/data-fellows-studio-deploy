@@ -1,3 +1,4 @@
+import { projectChannel } from "./project-channel.js";
 const api = window.STUDIO_API_URL || "http://localhost:8100";
 const syntheticHarness = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)
   && new URLSearchParams(location.search).get("harness") === "synthetic";
@@ -70,7 +71,7 @@ function renderFeedback() { $("#feedback-list").innerHTML = `<div class="feedbac
 function renderInvitationHighlight() { const item = assignments.find((assignment) => assignment.status === "invited"); $("#invitation-highlight").innerHTML = item ? `<div class="invitation-kicker">NEW INVITATION</div><div class="invitation-title">${escapeHtml(item.title || "Scoped delivery invitation")}</div><p>${escapeHtml(item.objective || "Review the scope and acceptance criteria before responding.")}</p><div class="invitation-actions"><button class="primary-button accept-invitation" data-assignment-id="${escapeHtml(item.id)}">Accept invitation</button><button class="secondary-button decline-invitation" data-assignment-id="${escapeHtml(item.id)}">Decline</button></div>` : `<div class="invitation-kicker">INVITATIONS</div><div class="invitation-title">No invitations requiring attention</div><p>New scoped opportunities from Data Fellows will appear here.</p>`; $$(".accept-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "accept"))); $$(".decline-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "decline"))); }
 function renderInvitations() { const pending = assignments.filter((item) => item.status === "invited"); $("#invitations-list").innerHTML = pending.length ? pending.map((item) => `<article class="panel invitation-detail"><div class="eyebrow">INVITATION</div><h2>${escapeHtml(item.title || "Scoped delivery invitation")}</h2><p>${escapeHtml(item.objective || "Review the assigned scope and acceptance criteria before responding.")}</p><div class="assignment-meta"><div><span>Project</span><strong>${escapeHtml(item.project_name || "Project reference")}</strong></div><div><span>Supervisor</span><strong>Data Fellows delivery lead</strong></div><div><span>Deadline</span><strong>${escapeHtml(dateLabel(item.expires_at))}</strong></div></div><div class="card-footer"><small>Acceptance activates assignment-scoped access only.</small><div class="invitation-actions"><button class="primary-button accept-invitation" data-assignment-id="${escapeHtml(item.id)}">Accept invitation</button><button class="secondary-button decline-invitation" data-assignment-id="${escapeHtml(item.id)}">Decline</button></div></div></article>`).join("") : emptyState("No pending invitations", "New scoped invitations from Data Fellows will appear here."); $$("#invitations-list .accept-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "accept"))); $$("#invitations-list .decline-invitation").forEach((button) => button.addEventListener("click", () => decideAssignment(button.dataset.assignmentId, "decline"))); }
 
-async function loadAssignments() { try { assignments = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/assignments`); renderMetrics(); renderAssignments(); renderDeadlines(); renderInvitationHighlight(); renderInvitations(); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
+async function loadAssignments() { try { assignments = await request(`/api/professionals/${encodeURIComponent(actor.value.trim())}/assignments`); renderMetrics(); renderAssignments(); renderDeadlines(); renderInvitationHighlight(); renderInvitations(); openWorkChannel(); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
 async function loadSelectedDeliverables() { const packageId = $("#package-id")?.value.trim(); if (!packageId) { $("#deliverables-list").innerHTML = emptyState("Choose an assignment", "Open an assignment to view its versioned deliverables."); return; } try { const deliverables = await request(`/api/work-packages/${encodeURIComponent(packageId)}/deliverables`); $("#deliverables-list").innerHTML = deliverables.length ? deliverables.map((item) => `<article class="panel deliverable-card"><div class="panel-heading"><div><h2>${escapeHtml(item.title)}</h2><p>Version ${item.version} · Submitted by ${escapeHtml(item.submitted_by || "authorized delivery resource")}</p></div><span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div><p class="muted">${escapeHtml(item.content)}</p><div class="card-footer"><small>Immutable version record</small>${item.status === "approved" || item.status === "accepted" ? `<button class="text-button choose-deliverable" data-deliverable-id="${escapeHtml(item.id)}">Use this version</button>` : ""}</div></article>`).join("") : emptyState("No deliverables yet", "Submit a version when your assigned work is ready for review."); $$(".choose-deliverable").forEach((button) => { button.addEventListener("click", () => { $("#deliverable-id").value = button.dataset.deliverableId; }); }); } catch (error) { $("#deliverables-list").innerHTML = emptyState("Deliverables unavailable", error.message); } }
 async function loadOpportunities() { try { opportunities = await request("/api/opportunities"); const filters = [...new Set(opportunities.map((item) => item.specialization).filter(Boolean))]; $("#opportunity-filter").innerHTML = `<option value="">All specializations</option>${filters.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`; renderOpportunities(); } catch (error) { $("#opportunity-list").innerHTML = emptyState("Opportunities unavailable", error.message); } }
 function renderOpportunities() { const filter = $("#opportunity-filter").value; const query = $("#opportunity-search").value.trim().toLowerCase(); const visible = opportunities.filter((item) => (!filter || item.specialization === filter) && (!query || `${item.title} ${item.summary} ${item.skills?.join(" ")}`.toLowerCase().includes(query))); $("#opportunity-list").innerHTML = visible.length ? visible.map((item) => `<article class="panel opportunity-card"><div class="eyebrow">${escapeHtml(item.specialization || "General")}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.summary)}</p><div class="chip-list">${(item.skills || []).map((skill) => `<span class="chip">${escapeHtml(skill)}</span>`).join("")}</div><div class="card-footer"><small>${item.compensation ? escapeHtml(item.compensation) : "Compensation terms shared after selection"}<br />${item.deadline ? `Response by ${escapeHtml(dateLabel(item.deadline))}` : "No response deadline recorded"}</small>${item.interest_status ? `<span class="status-badge success">${escapeHtml(statusLabel(item.interest_status))}</span>` : `<button class="primary-button interest-button" data-opportunity-id="${escapeHtml(item.id)}">Express interest</button>`}</div></article>`).join("") : emptyState("No opportunities match", "Data Fellows will publish sanitized opportunities when eligible work is available."); $$(".interest-button").forEach((button) => button.addEventListener("click", () => expressInterest(button.dataset.opportunityId))); }
@@ -490,7 +491,7 @@ function renderAdminLists(view) {
   }
   if (view === "admin-ai") { const host = $("#admin-ai-list"); host.querySelectorAll(".admin-card").forEach((card, index) => { const item = adminData.ai_runs[index]; if (!item) return; if (item.artifact_status === "pending_review") card.insertAdjacentHTML("beforeend", `<div class="card-footer"><button class="primary-button ai-approve-button" data-run-id="${escapeHtml(item.id)}">Approve artifact</button><button class="secondary-button ai-reject-button" data-run-id="${escapeHtml(item.id)}">Reject</button></div>`); else card.insertAdjacentHTML("beforeend", `<div class="card-footer"><small>Artifact ${escapeHtml(item.artifact_status || "not available")}</small><button class="secondary-button admin-detail-button" data-admin-detail="ai" data-record-id="${escapeHtml(item.id)}">Open run</button></div>`); }); $$(".ai-approve-button").forEach((button) => button.addEventListener("click", () => decideAdminAI(button.dataset.runId, "approved"))); $$(".ai-reject-button").forEach((button) => button.addEventListener("click", () => decideAdminAI(button.dataset.runId, "rejected"))); }
 }
-async function loadAdminOverview() { try { adminData = await request("/api/admin/overview"); renderAdminOverview(); renderAdminLists(location.hash.slice(1) || "admin-overview"); } catch (error) { showMessage(error.message, "error"); } }
+async function loadAdminOverview() { try { adminData = await request("/api/admin/overview"); renderAdminOverview(); renderAdminLists(location.hash.slice(1) || "admin-overview"); openWorkChannel(); } catch (error) { showMessage(error.message, "error"); } }
 
 function clientStatus(status) {
   const tone = status === "completed" || status === "accepted" ? "success" : status === "approved" ? "info" : status === "revision_requested" ? "warning" : "neutral";
@@ -539,6 +540,16 @@ function renderClientDeliverables() {
   $$(".client-revision-button").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); if (form) form.hidden = false; }));
   $$(".submit-client-revision").forEach((button) => button.addEventListener("click", () => { const form = document.querySelector(`[data-revision-for=\"${CSS.escape(button.dataset.deliverableId)}\"]`); requestClientRevision(button.dataset.deliverableId, form?.querySelector("textarea")?.value || ""); }));
 }
+const channel = projectChannel({ request, escapeHtml, dateLabel, actor, role });
+function openWorkChannel() {
+  if (location.hash === "#admin-communications" && role.value === "admin")
+    channel.open($("#staff-project-channel"), adminData?.projects || []);
+  if (location.hash === "#messages" && role.value === "professional") {
+    const projects = new Map(assignments.filter(item => item.status === "accepted").map(item => [item.project_id, item.project_name]));
+    channel.open($("#work-project-channel"), [...projects].map(([id, name]) => ({id, name})));
+  }
+}
+let clientLoad = 0;
 function renderClientOperations() {
   const projects = clientData?.projects || [];
   const select = $("#client-message-project");
@@ -551,14 +562,19 @@ function renderClientOperations() {
 }
 async function loadClientOperations(projectId = "") {
   const projects = clientData?.projects || [];
+  const sequence = ++clientLoad;
   const selected = projectId || (projects.some((item) => item.id === clientOperations.projectId) ? clientOperations.projectId : projects[0]?.id) || "";
   clientOperations = { projectId: selected, messages: [], activity: [] };
-  if (!selected) return renderClientOperations();
+  renderClientOperations();
+  if (location.hash === "#client-communications")
+    channel.open($("#client-coordination"), projects, selected);
+  if (!selected) return;
   try {
     const [messages, activity] = await Promise.all([
       request(`/api/projects/${encodeURIComponent(selected)}/messages`),
       request(`/api/projects/${encodeURIComponent(selected)}/activity`),
     ]);
+    if (sequence !== clientLoad || role.value !== "client") return;
     clientOperations = { projectId: selected, messages, activity };
   } catch (error) { showMessage(error.message, "error"); }
   renderClientOperations();
@@ -598,6 +614,7 @@ function navigate(viewName) {
   if (view.startsWith("client-") && role.value === "client") { if (!clientData) loadClientOverview(); else { renderClientOverview(); renderClientProjects(); renderClientDeliverables(); if (view === "client-communications") loadClientOperations(); } }
   if (view === "opportunities") loadOpportunities();
   if (view === "deliverables") loadSelectedDeliverables();
+  if (view === "messages") openWorkChannel();
   if (view === "reviews") renderReviews();
   if (view === "profile") loadProfessionalProfile();
 
@@ -611,6 +628,10 @@ function setProfessionalNavigation(approved) {
 }
 
 function syncRole() {
+  channel.clear();
+  clientLoad++;
+  assignments = [];
+  clientOperations = { projectId: "", messages: [], activity: [] };
   professionalProfile = null;
   profileEditMode = false;
   profileAccessOwner = "";

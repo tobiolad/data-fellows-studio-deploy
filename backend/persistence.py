@@ -250,6 +250,53 @@ class PostgresRepository:
             raise PermissionError("Project access is not authorized")
         return organization_id, roles
 
+    def project_coordination(self, project_id, actor, admin):
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            _, roles = self._project_context(cursor, project_id, actor, admin)
+            if not roles.intersection({"admin", "client", "owner"}):
+                raise PermissionError("Client project coordination access is required")
+            cursor.execute("""SELECT id, project_id, subject, created_at, decision, rationale, decided_at
+                           FROM project_requests WHERE project_id=%s ORDER BY created_at DESC, id""", (project_id,))
+            requests = [dict(zip(("id", "project_id", "subject", "created_at", "decision", "rationale", "decided_at"), row))
+                        for row in cursor.fetchall()]
+            cursor.execute("SELECT versions, created_at FROM project_handovers WHERE project_id=%s", (project_id,))
+            handover = cursor.fetchone()
+            return {"requests": requests, "handover": dict(zip(("versions", "created_at"), handover)) if handover else None}
+
+    def open_project_request(self, project_id, actor, subject):
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            org, roles = self._project_context(cursor, project_id, actor)
+            if "client" not in roles:
+                raise PermissionError("Client membership is required")
+            key = uuid4()
+            cursor.execute("INSERT INTO project_requests(id, project_id, subject, requested_by) VALUES (%s,%s,%s,%s)",
+                           (key, project_id, subject, actor))
+            cursor.execute("""INSERT INTO notifications(id, project_id, recipient_group, kind, title, body)
+                           VALUES (%s,%s,'internal','project.request.opened','Client request','A client request needs a decision.')""",
+                           (uuid4(), project_id))
+            self._audit(cursor, org, actor, "project.request.opened", "project_request", str(key))
+            return {"id": key}
+
+    def decide_project_request(self, project_id, request_id, actor, decision, rationale):
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            org, _ = self._project_context(cursor, project_id, actor, admin=True)
+            cursor.execute("SELECT decision FROM project_requests WHERE project_id=%s AND id=%s FOR UPDATE", (project_id, request_id))
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Project request not found")
+            if row[0]:
+                raise ValueError("A decision has already been recorded")
+            cursor.execute("UPDATE project_requests SET decision=%s,rationale=%s,decided_by=%s,decided_at=now() WHERE id=%s",
+                           (decision, rationale, actor, request_id))
+            cursor.execute("""INSERT INTO notifications(id, project_id, recipient_group, kind, title, body)
+                           VALUES (%s,%s,'client','project.request.decided','Request decision','Data Fellows responded to a request.')""",
+                           (uuid4(), project_id))
+            self._audit(cursor, org, actor, "project.request.decided", "project_request", str(request_id))
+            return {"id": request_id, "decision": decision}
+
     def list_project_messages(self, project_id: UUID, actor: str, admin: bool = False) -> list[dict[str, Any]]:
         with self.transaction() as connection:
             cursor = connection.cursor()
@@ -774,7 +821,7 @@ class PostgresRepository:
             cursor = connection.cursor()
             cursor.execute(
                 """SELECT a.id, a.work_package_id, a.professional_id, a.status, a.expires_at, a.created_at,
-                          w.title, p.name, e.name, e.objective
+                          w.title, p.name, e.name, e.objective, p.id
                    FROM assignments a
                    JOIN work_packages w ON w.id = a.work_package_id
                    JOIN projects p ON p.id = w.project_id
@@ -785,7 +832,7 @@ class PostgresRepository:
                 (professional_id, admin),
             )
             return [
-                {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5], "title": row[6], "project_name": row[7], "engagement_name": row[8], "objective": row[9]}
+                {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5], "title": row[6], "project_name": row[7], "engagement_name": row[8], "objective": row[9], "project_id": str(row[10])}
                 for row in cursor.fetchall()
             ]
 
@@ -1168,16 +1215,22 @@ class PostgresRepository:
     def complete_project(self, project_id: UUID, actor: str) -> dict[str, Any]:
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT e.organization_id, p.status FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s", (project_id,))
+            cursor.execute("SELECT e.organization_id, p.status FROM projects p JOIN engagements e ON e.id = p.engagement_id WHERE p.id = %s FOR UPDATE OF p", (project_id,))
             row = cursor.fetchone()
             if row is None:
                 raise LookupError("Project not found")
             organization_id, status = row
             self._require_owner(cursor, organization_id, actor)
-            cursor.execute("SELECT 1 FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id WHERE w.project_id = %s AND d.status = 'accepted'", (project_id,))
-            if cursor.fetchone() is None:
+            if status == "completed":
+                return {"id": str(project_id), "status": status}
+            cursor.execute("""SELECT d.id, d.title, d.version FROM deliverables d JOIN work_packages w ON w.id=d.work_package_id
+                           WHERE w.project_id=%s AND d.status='accepted' ORDER BY d.id""", (project_id,))
+            versions = [{"id": str(key), "title": title, "version": version} for key, title, version in cursor.fetchall()]
+            if not versions:
                 raise ValueError("At least one client-accepted deliverable is required")
             cursor.execute("UPDATE projects SET status = 'completed' WHERE id = %s", (project_id,))
+            cursor.execute("INSERT INTO project_handovers(project_id, recorded_by, versions) VALUES (%s,%s,%s::jsonb)",
+                           (project_id, actor, json.dumps(versions)))
             self._audit(cursor, organization_id, actor, "project.completed", "project", str(project_id))
             return {"id": str(project_id), "status": "completed"}
 

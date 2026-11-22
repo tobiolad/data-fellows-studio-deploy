@@ -109,6 +109,22 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.client.get(f"/api/work-packages/{package['id']}/deliverables", headers=self.client_user).json()), 1)
         completed = self.post(f"/api/projects/{project['id']}/complete", {}, self.admin)
         self.assertEqual(completed["status"], "completed")
+        path = f"/api/projects/{project['id']}"
+        client_headers = self.client_user
+        record = self.client.get(path + "/coordination", headers=client_headers).json()
+        self.assertTrue(record["handover"]["versions"])
+        self.assertTrue(all(row["version"] > 0 for row in record["handover"]["versions"]))
+        response = self.client.post(path + "/requests", headers=client_headers, json={"subject": "Confirm reporting frequency"})
+        self.assertEqual(response.status_code, 201)
+        decision_path = path + "/requests/" + response.json()["id"] + "/decision"
+        decision = {"decision": "approved", "rationale": "Included in the approved scope"}
+        self.assertEqual(self.client.post(decision_path, headers=client_headers, json=decision).status_code, 403)
+        self.assertEqual(self.client.post(decision_path, headers=self.admin, json=decision).status_code, 200)
+        self.assertEqual(self.client.post(decision_path, headers=self.admin, json=decision).status_code, 409)
+        updated = self.client.get(path + "/coordination", headers=client_headers).json()
+        self.assertEqual(updated["requests"][0]["rationale"], decision["rationale"])
+        self.assertEqual(updated["handover"], record["handover"])
+
 
         events = self.client.get("/api/audit", headers=self.admin).json()
         actions = {event["action"] for event in events}
