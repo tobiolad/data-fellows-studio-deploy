@@ -1,20 +1,4 @@
 {
-  "admin-mission-control": {
-    "status": "passed",
-    "unauthorizedAdminOverview": 403,
-    "pageErrors": [],
-    "failedRequests": []
-  },
-  "ui-contract": "Studio UI contract passed",
-  "client-portal": {
-    "status": "passed",
-    "clientProject": "bc69a6b9-7552-407b-b186-3327d44c69f1",
-    "clientAcceptance": "accepted",
-    "project": "completed",
-    "pageErrors": [],
-    "failedRequests": []
-  },
-  "engagement-workspace": "Passed harness isolation, engagement creation, search and details",
   "synthetic-lifecycle": {
     "status": "passed",
     "unauthorizedClientReview": 403,
@@ -22,13 +6,29 @@
     "pageErrors": [],
     "failedRequests": []
   },
+  "admin-mission-control": {
+    "status": "passed",
+    "unauthorizedAdminOverview": 403,
+    "pageErrors": [],
+    "failedRequests": []
+  },
+  "ui-contract": "Studio UI contract passed",
   "profile-admission-review": {
     "status": "passed",
-    "actor": "profile-admission-1795268689901",
+    "actor": "profile-admission-1795268922649",
     "profile": "saved_and_reloaded",
     "review": "approved",
     "unauthorized_profile_status": 403,
     "errors": [],
     "failures": []
-  }
+  },
+  "client-portal": {
+    "status": "passed",
+    "clientProject": "ac22d7bf-b899-44c8-8866-0611e79c7a68",
+    "clientAcceptance": "accepted",
+    "project": "completed",
+    "pageErrors": [],
+    "failedRequests": []
+  },
+  "engagement-workspace": "Passed harness isolation, engagement creation, search and details"
 }

@@ -66,19 +66,20 @@ async function main() {
     await page.click('[data-view="applications"]');
     if (await page.locator("#submit-application").isEnabled()) await page.click("#submit-application");
     await role("admin");
-    await admitProfessional(api, "professional-1");
-    for (const [actorId, memberRole] of [["professional-1", "professional"], ["reviewer-1", "reviewer"], ["client-1", "client"]]) {
+    const professionalId = "professional-1";
+    await admitProfessional(api, professionalId);
+    for (const [actorId, memberRole] of [[professionalId, "professional"], ["reviewer-1", "reviewer"], ["client-1", "client"]]) {
       const grant = await api("admin-1", "admin", `/api/organizations/${organizationId}/members`, { method: "POST", body: JSON.stringify({ actor_id: actorId, role: memberRole }) });
       assert.ok([200, 201, 409].includes(grant.status));
     }
     const opportunity = await api("admin-1", "admin", "/api/opportunities", { method: "POST", body: JSON.stringify({ title: "Synthetic delivery opportunity", summary: "A sanitized opportunity for the browser walkthrough.", specialization: "Automation", skills: ["Python"], compensation: null }) });
     assert.strictEqual(opportunity.status, 201);
-    const interest = await api("professional-1", "professional", `/api/opportunities/${opportunity.body.id}/interests`, { method: "POST", body: JSON.stringify({ approach: "Synthetic verified delivery experience." }) });
+    const interest = await api(professionalId, "professional", `/api/opportunities/${opportunity.body.id}/interests`, { method: "POST", body: JSON.stringify({ approach: "Synthetic verified delivery experience." }) });
     assert.strictEqual(interest.status, 201);
     const selection = await api("admin-1", "admin", `/api/opportunity-interests/${interest.body.id}/selected`, { method: "POST", body: "{}" });
     assert.strictEqual(selection.status, 200);
-    await fillAndClick({ "#invite-package": packageId, "#invite-professional": "professional-1" }, "#invite-professional-button");
-    const assignmentResponse = await api("professional-1", "professional", "/api/professionals/professional-1/assignments");
+    await fillAndClick({ "#invite-package": packageId, "#invite-professional": professionalId }, "#invite-professional-button");
+    const assignmentResponse = await api(professionalId, "professional", "/api/professionals/professional-1/assignments");
     const assignment = assignmentResponse.body.find((item) => item.work_package_id === packageId);
     assert.ok(assignment?.id);
     await screenshot("playwright-vetting-and-assignment-1440");
@@ -111,7 +112,7 @@ async function main() {
     const decision = { method: "POST", body: JSON.stringify({ decision: "approved", comment: "Independent synthetic review" }) };
     assert.equal((await api("admin-1", "admin", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 409);
     assert.equal((await api("reviewer-1", "reviewer", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 200);
-    assert.equal((await api("professional-1", "professional", `/api/deliverables/${deliverableId}/review`, decision)).status, 409);
+    assert.equal((await api(professionalId, "professional", `/api/deliverables/${deliverableId}/review`, decision)).status, 409);
     const unauthorized = await api("client-1", "client", `/api/deliverables/${deliverableId}/review`, { method: "POST", body: JSON.stringify({ decision: "approved", comment: "not allowed" }) });
     assert.strictEqual(unauthorized.status, 403);
     await role("reviewer");
