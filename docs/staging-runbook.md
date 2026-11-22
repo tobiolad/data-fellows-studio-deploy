@@ -1,5 +1,8 @@
 # Synthetic staging runbook
 
+For the current candidate, use the [release gates](staging-release-controls.md), [Entra configuration](staging-identity.md) and [verification report](release/STAGING_RELEASE_REPORT.md).
+
+
 This runbook is approval-controlled. It does not authorize provisioning or deployment.
 
 ## Preflight

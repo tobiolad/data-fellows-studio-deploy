@@ -1,0 +1,17 @@
+{
+  "errors": [],
+  "checks": [
+    {
+      "view": "client-coordination-390",
+      "violations": []
+    },
+    {
+      "view": "staff-coordination-1440",
+      "violations": []
+    },
+    {
+      "view": "professional-channel-1024",
+      "violations": []
+    }
+  ]
+}

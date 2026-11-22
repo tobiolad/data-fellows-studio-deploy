@@ -42,6 +42,10 @@ class PostgresIntegrationTests(unittest.TestCase):
                 with self.repository.transaction() as connection:
                     connection.execute(statement)
 
+    def test_staging_job_rejects_a_local_database_before_ddl(self):
+        with patch.dict(os.environ, {"STUDIO_ENV": "staging"}), self.assertRaisesRegex(PersistenceConfigurationError, "certificate-verified"):
+            self.repository.migrate()
+
     def test_migrations_are_idempotent(self) -> None:
         self.repository.migrate()
         self.repository.migrate()

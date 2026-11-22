@@ -11,7 +11,7 @@ a { color: inherit; text-decoration: none; }
 .brand-mark { width: 36px; height: 36px; border: 3px solid #fff; border-radius: 9px; display: grid; place-items: center; font-size: 24px; font-weight: 850; line-height: 1; }
 .brand strong, .brand small { display: block; line-height: 1.1; }
 .brand strong { font-size: 15px; letter-spacing: -.02em; }
-.brand small { font-size: 15px; opacity: .85; }
+.brand small { font-size: 15px; color: #dbe6f6; }
 .portal-label { margin: 0 10px 24px; padding: 7px 10px; border: 1px solid #3960a4; border-radius: 8px; color: #d9e4ff; font-size: 12px; font-weight: 700; width: max-content; background: #14356c; }
 .nav-list { display: grid; gap: 4px; }
 .nav-list a { display: flex; align-items: center; gap: 12px; min-height: 41px; padding: 0 12px; border-radius: 9px; color: #bfcae2; font-size: 13px; font-weight: 650; transition: background .15s ease, color .15s ease; }
@@ -375,3 +375,16 @@ dialog.admin-detail-drawer::backdrop { background: rgb(11 33 70 / 30%); }
 
 .app-shell[hidden], #sign-in-panel[hidden] { display: none; }
 #sign-in-panel { max-width: 32rem; margin: 10vh auto; }
+
+.synthetic-warning[hidden] { display: none; }
+.message-composer select, .message-composer input {
+  min-height: 42px;
+  width: 100%;
+  border: 1px solid var(--df-line);
+  border-radius: var(--df-radius-sm);
+  padding: 8px 10px;
+  background: var(--df-surface);
+  color: var(--df-ink);
+  font: inherit;
+}
+.message-composer label { font-size: 13px; }

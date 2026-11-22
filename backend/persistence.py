@@ -43,7 +43,7 @@ class PostgresRepository:
             import psycopg
         except ImportError as exc:  # pragma: no cover - dependency is installed by deployment
             raise PersistenceConfigurationError("psycopg is required for PostgreSQL persistence") from exc
-        return psycopg.connect(self.dsn)
+        return psycopg.connect(self.dsn, connect_timeout=5)
 
     @contextmanager
     def transaction(self) -> Iterator[Any]:
@@ -69,6 +69,13 @@ class PostgresRepository:
             raise PersistenceConfigurationError("No Studio migrations were found")
         with self.transaction() as connection:
             cursor = connection.cursor()
+            if os.getenv("STUDIO_ENV", "").lower() == "staging":
+                from psycopg.conninfo import conninfo_to_dict
+                if conninfo_to_dict(self.dsn).get("sslmode") != "verify-full":
+                    raise PersistenceConfigurationError("Staging migration requires certificate-verified PostgreSQL")
+                cursor.execute("SELECT current_database(), current_user")
+                if cursor.fetchone() != ("studio_staging", "studio_migrator"):
+                    raise PersistenceConfigurationError("Staging migration requires the dedicated Studio database and migrator")
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext('data-fellows-studio-migrate'))")
             cursor.execute("CREATE TABLE IF NOT EXISTS studio_schema_migrations (version text PRIMARY KEY, checksum text, applied_at timestamptz NOT NULL DEFAULT now())")
             cursor.execute("ALTER TABLE studio_schema_migrations ADD COLUMN IF NOT EXISTS checksum text")

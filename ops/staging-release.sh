@@ -32,7 +32,9 @@ case "$operation" in
       and (.properties.template.initContainers // [] | length)==0
       and (.properties.template.containers|length)==1
       and (.properties.template.containers[0] |
-        .image==$image and .command==["python","-m","backend.migrate"] and ((.args // [])|length)==0)' <<<"$config" >/dev/null
+        .image==$image and .command==["python","-m","backend.migrate"] and ((.args // [])|length)==0
+        and (.env | any(.name=="STUDIO_ENV" and .value=="staging"))
+        and (.env | any(.name=="STUDIO_DATABASE_URL" and .secretRef=="studio-migration-dsn")))' <<<"$config" >/dev/null
     name="$(az containerapp job start -g "$group" -n "$job" --query name -o tsv)"
     [[ -n "$name" ]]
     for _ in $(seq 1 80); do

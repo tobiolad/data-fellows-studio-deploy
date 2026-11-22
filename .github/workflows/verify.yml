@@ -45,6 +45,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Exercise staging guards with offline CLI fixtures
+        run: tests/staging/release-controls.sh
       - name: Validate backend Dockerfile
         run: docker build --check --file backend/Dockerfile .
       - name: Validate frontend Dockerfile

@@ -1,5 +1,7 @@
 # Production readiness
 
+This is the #48 baseline. The [staging release report](../release/STAGING_RELEASE_REPORT.md) records subsequent engineering and current owner gates.
+
 **Release disposition: blocked.** This increment provides a locally tested synthetic workspace and backend safeguards. The existing staging plan requires separately approved Azure and Entra validation.
 
 | Capability | Status | Remaining evidence |

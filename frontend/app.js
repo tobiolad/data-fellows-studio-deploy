@@ -748,6 +748,7 @@ engagementForm.addEventListener("submit", async event => {
   } finally { submit.disabled = false; }
 });
 
+$(".synthetic-warning").hidden = !syntheticHarness;
 $("#developer-tools").hidden = !syntheticHarness;
 function showSignIn(message) {
   actor.value = "";

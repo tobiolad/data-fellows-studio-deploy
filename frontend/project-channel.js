@@ -8,7 +8,7 @@ export function projectChannel({ request, escapeHtml: esc, dateLabel, actor, rol
   async function open(host, projects, selected = "") {
     const generationAtOpen = ++generation;
     const identity = role.value;
-    const project = projects.find(item => item.id === selected) || projects[0];
+    const project = projects.find(item => item.id === (selected || sections.get(host))) || projects[0];
     host.replaceChildren();
     if (!project) {
       host.textContent = "Project communication becomes available when you have access to a project.";
@@ -17,6 +17,7 @@ export function projectChannel({ request, escapeHtml: esc, dateLabel, actor, rol
     const path = `/api/projects/${encodeURIComponent(project.id)}`;
     if (identity !== "client") {
       const label = document.createElement("label");
+      label.className = "compact-field";
       label.textContent = "Project";
       const select = document.createElement("select");
       for (const item of projects) select.add(new Option(item.name, item.id));
