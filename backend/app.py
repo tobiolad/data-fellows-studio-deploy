@@ -11,10 +11,11 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
+from threading import Lock
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -92,6 +93,7 @@ class Store:
 
 
 store = Store()
+_deliverable_lock = Lock()
 app = FastAPI(title="Data Fellows Studio", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
@@ -1390,25 +1392,31 @@ def submit_deliverable(body: DeliverableCreate, request: Request) -> dict:
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
     allowed = store.memberships.get((actor.actor_id, org_id), set())
-    assigned = any(a["work_package_id"] == body.work_package_id and a["professional_id"] == actor.actor_id for a in store.assignments.values())
-    if "admin" not in actor.roles and "owner" not in allowed and not assigned:
+    current_time = datetime.now(timezone.utc).timestamp()
+    assigned = "professional" in allowed and actor.actor_id in store.approved_professionals and any(
+        a["work_package_id"] == body.work_package_id and a["professional_id"] == actor.actor_id
+        and a["status"] == "accepted" and (not a["expires_at"] or datetime.fromisoformat(a["expires_at"]).timestamp() > current_time)
+        for a in store.assignments.values()
+    )
+    if "owner" not in allowed and not assigned:
         raise HTTPException(status_code=403, detail="Only an assigned delivery resource may submit")
-    existing = [d for d in store.deliverables.values() if d["work_package_id"] == body.work_package_id]
-    if existing and existing[-1]["status"] in {"under_review", "approved", "accepted"}:
-        raise HTTPException(status_code=409, detail="A new version requires a revision request on the latest deliverable")
-    deliverable_id = str(uuid4())
-    record = {
-        "id": deliverable_id,
-        "work_package_id": body.work_package_id,
-        "title": body.title,
-        "content": body.content,
-        "version": len(existing) + 1,
-        "submitted_by": actor.actor_id,
-        "status": "under_review",
-    }
-    store.deliverables[deliverable_id] = record
-    audit_response(actor, "deliverable", deliverable_id, "deliverable.submitted", org_id)
-    return record
+    with _deliverable_lock:
+        existing = [d for d in store.deliverables.values() if d["work_package_id"] == body.work_package_id]
+        if existing and existing[-1]["status"] in {"under_review", "approved", "accepted"}:
+            raise HTTPException(status_code=409, detail="A new version requires a revision request on the latest deliverable")
+        deliverable_id = str(uuid4())
+        record = {
+            "id": deliverable_id,
+            "work_package_id": body.work_package_id,
+            "title": body.title,
+            "content": body.content,
+            "version": len(existing) + 1,
+            "submitted_by": actor.actor_id,
+            "status": "under_review",
+        }
+        store.deliverables[deliverable_id] = record
+        audit_response(actor, "deliverable", deliverable_id, "deliverable.submitted", org_id)
+        return record
 
 
 @app.get("/api/work-packages/{package_id}/deliverables")
@@ -1433,9 +1441,46 @@ def list_deliverables(package_id: str, request: Request) -> list[dict]:
     return sorted(deliverables, key=lambda item: item["version"])
 
 
+@app.get("/api/reviewer/queue")
+def reviewer_queue(request: Request, offset: int = Query(default=0, ge=0)) -> dict:
+    actor = identity(request)
+    require_global(actor, "reviewer", "admin")
+    page_size = 20
+    if postgres_mode():
+        rows = postgres_repository().reviewer_queue(actor.actor_id, offset, page_size + 1)
+    else:
+        rows = []
+        for item in store.deliverables.values():
+            if item["status"] != "under_review" or item["submitted_by"] == actor.actor_id:
+                continue
+            package = store.work_packages[item["work_package_id"]]
+            project = store.projects[package["project_id"]]
+            org = organization_for_engagement(project["engagement_id"])
+            if not store.memberships.get((actor.actor_id, org), set()).intersection({"owner", "reviewer"}):
+                continue
+            rows.append({**item, "project_name": project["name"], "package_title": package["title"],
+                         "acceptance_criteria": package["acceptance_criteria"]})
+        rows.sort(key=lambda row: (row.get("created_at", ""), row["id"]))
+        rows = rows[offset:offset + page_size + 1]
+        for row in rows[:page_size]:
+            prior = {v["id"]: v["version"] for v in store.deliverables.values()
+                     if v["work_package_id"] == row["work_package_id"] and v["version"] < row["version"]}
+            row["previous_reviews"] = sorted(
+                ({"version": prior[r["deliverable_id"]], "decision": r["decision"], "comment": r["comment"]}
+                 for r in store.reviews.values() if r["deliverable_id"] in prior),
+                key=lambda review: review["version"], reverse=True)[:5]
+    fields = ("id", "title", "version", "content", "project_name", "package_title", "acceptance_criteria", "previous_reviews")
+    return {"items": [{key: row[key] for key in fields} for row in rows[:page_size]], "has_more": len(rows) > page_size}
+
+
+
+
 @app.post("/api/deliverables/{deliverable_id}/review")
 def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request) -> dict:
     actor = identity(request)
+    require_global(actor, "admin", "reviewer")
+    if not body.comment.strip():
+        raise HTTPException(status_code=422, detail="Enter a review comment")
     if postgres_mode():
         try:
             return postgres_repository().review_deliverable(UUID(deliverable_id), actor.actor_id, body.decision, body.comment)
@@ -1451,14 +1496,18 @@ def review_deliverable(deliverable_id: str, body: ReviewCreate, request: Request
         raise HTTPException(status_code=404, detail="Deliverable not found")
     if actor.actor_id == deliverable["submitted_by"]:
         raise HTTPException(status_code=409, detail="Independent review is required")
-    require_global(actor, "admin", "reviewer")
     project = project_for_package(deliverable["work_package_id"])
-    member(actor, organization_for_engagement(project["engagement_id"]), "reviewer", "owner")
-    deliverable["status"] = body.decision
-    review_id = str(uuid4())
-    store.reviews[review_id] = {"id": review_id, "deliverable_id": deliverable_id, "reviewer": actor.actor_id, **body.model_dump(), "created_at": now()}
-    audit_response(actor, "deliverable", deliverable_id, f"deliverable.{body.decision}", organization_for_engagement(project["engagement_id"]))
-    return {"deliverable": deliverable, "review": store.reviews[review_id]}
+    org = organization_for_engagement(project["engagement_id"])
+    if not store.memberships.get((actor.actor_id, org), set()).intersection({"reviewer", "owner"}):
+        raise HTTPException(status_code=403, detail="Reviewer is not authorized for this organization")
+    with _deliverable_lock:
+        if deliverable["status"] != "under_review":
+            raise HTTPException(status_code=409, detail="This version has already received a decision")
+        deliverable["status"] = body.decision
+        review_id = str(uuid4())
+        store.reviews[review_id] = {"id": review_id, "deliverable_id": deliverable_id, "reviewer": actor.actor_id, **body.model_dump(), "created_at": now()}
+        audit_response(actor, "deliverable", deliverable_id, f"deliverable.{body.decision}", organization_for_engagement(project["engagement_id"]))
+        return {"deliverable": deliverable, "review": store.reviews[review_id]}
 
 
 @app.post("/api/deliverables/{deliverable_id}/accept")

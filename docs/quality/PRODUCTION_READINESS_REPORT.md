@@ -16,6 +16,6 @@
 | Support and handover | In development | Formal handover artifacts, contract entitlements, ticket ownership and service-level reporting |
 | BizPilot and HubSpot integration | In development | Separate environments and identities, approved and scoped handoff contracts; no live CRM synchronization |
 
-The current admin snapshot can grow with underlying collections. Client-side pagination limits rendering, while server-side indexed paging and performance measurements at representative volumes remain outstanding. The review surface still needs full acceptance criteria, revision lineage and assignment-specific evidence. The audit and screen inventory record further gaps.
+The current admin snapshot can grow with underlying collections. Client-side pagination limits rendering, while server-side indexed paging and performance measurements at representative volumes remain outstanding. The reviewer worklist shows acceptance criteria and recent prior internal decisions. Full version comparison and assignment-specific evidence inspection are outstanding. The audit and screen inventory record further gaps.
 
 [Existing staging preparation](../azure-staging-readiness.md) · [Integration readiness](../integration-readiness-matrix.md)

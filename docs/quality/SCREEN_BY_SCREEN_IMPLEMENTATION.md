@@ -14,7 +14,7 @@ Status describes the complete requested screen. The shared navigation gate cover
 | Applications and vetting | In development | Added searchable queue, human labels, structured qualification summary, evidence references and version-bound review. Assessment resolution history needs more work. | Admission, profile version, evidence metadata and audit |
 | Opportunities and staffing | In development | Shell upgraded. Formal agreements and an integrated selection journey remain outstanding. | Sanitized opportunities, interests, assignments |
 | AI operations | In development | Dashboard labels output review explicitly. Registry, policy, intervention and evaluation workspaces remain incomplete. | Runs, artifacts, policy and cost records |
-| Quality review | In development | Shell upgraded. Independent reviewer inspection still needs a scoped queue and version comparison. | Deliverables, internal review and assignment scope |
+| Quality review | In development | Reviewer worklist implemented and tested. Current content, criteria and prior internal decisions are available. Detailed version comparison and attached evidence inspection remain outstanding. | Deliverables, internal review and assignment scope |
 | Client approvals | In development | Shell upgraded. Client decisions are exercised through the client workflow. | Deliverables and version decisions |
 | Communications | Not implemented | Admin inbox and authorized threads need implementation. | Project-scoped messages |
 | Finance | Blocked | Verified ledger integration remains blocked. | Verified invoice and payment events |
@@ -34,7 +34,7 @@ Status describes the complete requested screen. The shared navigation gate cover
 | My assignments | In development | All accepted assignments appear in the workspace and the overview previews five. Large collections still need pagination. | Own accepted assignments |
 | Invitations | In development | Invitations stay separate from accepted work. Agreement objects remain outstanding. | Invited assignments |
 | Deliverables | In development | Added a readable accepted-assignment selector and version-specific submission path. | Accepted assignments and deliverable versions |
-| Reviews and feedback | In development | Reviewer navigation is scoped. A reviewer-specific queue and professional feedback history remain outstanding. | Independent review and deliverable history |
+| Reviews and feedback | In development | Reviewer navigation is scoped. The reviewer queue is implemented and tested. Professional feedback history remains outstanding. | Independent review and deliverable history |
 | Messages | Not implemented | Professional communications still need a scoped read and write surface. | Project channels and assignment authorization |
 | Earnings and payments | Blocked | Continues to show unavailable financial data. | Verified compensation and payout records |
 | Help and support | In development | Shell upgraded. Contract-aware support intake remains outstanding. | Support entitlement and ticket records |
@@ -52,4 +52,4 @@ Status describes the complete requested screen. The shared navigation gate cover
 
 ## Reviewer
 
-The reviewer uses the reviews route with a restricted navigation list. A reviewer can record an independent decision in the synthetic lifecycle. A scoped review worklist with evidence, criteria, author and version comparison is in development.
+The reviewer uses the reviews route with a restricted navigation list. A reviewer can record an independent decision in the synthetic lifecycle. The scoped worklist shows recorded criteria, submitted text and prior internal review comments. Private attachments, full version comparison and terminal rejection remain outstanding.

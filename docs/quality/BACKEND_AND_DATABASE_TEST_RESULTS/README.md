@@ -10,3 +10,7 @@ The second row includes the 28 tests from the first row. Seven are database-spec
 An intermediate run reused a previously populated disposable database. It returned 31 passes and one failure because an existing fixture profile had version 2 where the test expected its first save. A fresh database passed. Test isolation on repeated runs against an already used DSN remains a fixture limitation. Never point this suite at a shared or persistent staging database.
 
 No live Entra tenant, Stripe events, real documents or production traffic were involved.
+
+## Reviewer worklist increment
+
+The memory-only run passed 29 tests and skipped eight PostgreSQL-specific tests. The full run against a fresh local PostgreSQL 16 database passed 37 tests with zero skips and zero failures. Shared regression cases cover concurrent decisions, self-authored work exclusion, active reviewer membership, revocation, invitation-only submission denial and version-specific prior comments.

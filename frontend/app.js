@@ -78,7 +78,72 @@ async function expressInterest(opportunityId) { const approach = window.prompt("
 async function decideAssignment(id, decision) { try { await request(`/api/assignments/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" }); showMessage(`Invitation ${decision === "accept" ? "accepted" : "declined"}.`, "success"); await loadAssignments(); } catch (error) { showMessage(error.message, "error"); } }
 async function submitDeliverable() { const packageId = $("#package-id").value.trim(); const title = $("#deliverable-title").value.trim(); const content = $("#deliverable-content").value.trim(); if (!packageId || !title || !content) return showMessage("Choose an assignment and complete the deliverable fields first.", "error"); try { const item = await request("/api/deliverables", { method: "POST", body: JSON.stringify({ work_package_id: packageId, title, content }) }); $("#deliverable-id").value = item.id; $("#deliverable-status").textContent = `Version ${item.version} submitted for independent review.`; showMessage("Deliverable submitted for review.", "success"); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
 async function acceptDeliverable() { const id = $("#deliverable-id").value.trim(); if (!id) return showMessage("Choose an approved deliverable version first.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" }); showMessage("Approved deliverable accepted.", "success"); await loadSelectedDeliverables(); } catch (error) { showMessage(error.message, "error"); } }
-async function reviewDeliverable() { const id = $("#review-deliverable-id").value.trim(); const decision = $("#review-decision").value; const comment = $("#review-comment").value.trim(); if (!id || !comment) return showMessage("Complete the deliverable and review comment first.", "error"); try { await request(`/api/deliverables/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify({ decision, comment }) }); showMessage(`Deliverable ${statusLabel(decision)}.`, "success"); } catch (error) { showMessage(error.message, "error"); } }
+let reviewOffset = 0;
+let reviewRows = [];
+let reviewRequest = 0;
+
+function renderSubmission() {
+  const row = reviewRows.find(item => item.id === $("#review-deliverable-id").value);
+  if (!row) return;
+  $("#review-form").reset();
+  const list = items => items.map(item => `<li>${escapeHtml(item)}</li>`).join("");
+  $("#review-context").innerHTML = `<p>${escapeHtml(row.project_name)} · ${escapeHtml(row.package_title)}</p>
+    <h2>${escapeHtml(row.title)} <small>Version ${row.version}</small></h2>
+    <p class="submission-content">${escapeHtml(row.content)}</p>
+    <h3>Acceptance criteria</h3><ul>${list(row.acceptance_criteria)}</ul>
+    <h3>Previous internal reviews</h3>${row.previous_reviews.length
+      ? `<ul>${list(row.previous_reviews.map(r => `Version ${r.version} · ${statusLabel(r.decision)} — ${r.comment}`))}</ul>`
+      : "<p>No earlier internal decision recorded.</p>"}`;
+}
+
+async function loadReviewQueue() {
+  const sequence = ++reviewRequest;
+  const owner = token();
+  $("#review-action").hidden = true;
+  $("#review-paging").hidden = true;
+  $("#reviews-list").textContent = "Loading submissions…";
+  try {
+    const page = await request(`/api/reviewer/queue?offset=${reviewOffset}`);
+    if (sequence !== reviewRequest || owner !== token()) return;
+    if (!page.items.length && reviewOffset) { reviewOffset = 0; return loadReviewQueue(); }
+    reviewRows = page.items;
+    const picker = $("#review-deliverable-id");
+    picker.replaceChildren(...reviewRows.map(row => new Option(`${row.title} · Version ${row.version} · ${row.project_name}`, row.id)));
+    $("#reviews-list").textContent = reviewRows.length ? "" : "No submissions are awaiting your review.";
+    $("#review-action").hidden = !reviewRows.length;
+    $("#review-prev").disabled = !reviewOffset;
+    $("#review-next").disabled = !page.has_more;
+    $("#review-paging").hidden = !reviewOffset && !page.has_more;
+    renderSubmission();
+  } catch (error) {
+    if (sequence !== reviewRequest || owner !== token()) return;
+    $("#reviews-list").textContent = "The review queue could not be loaded. ";
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.textContent = "Try again";
+    retry.onclick = loadReviewQueue;
+    $("#reviews-list").append(retry);
+  }
+}
+
+async function reviewDeliverable(event) {
+  event.preventDefault();
+  const id = $("#review-deliverable-id").value;
+  const comment = $("#review-comment").value.trim();
+  const decision = $("#review-decision").value;
+  if (!id || !comment || !decision) return showMessage("Choose a submission and decision and add review notes.", "error");
+  const submit = $("#review-deliverable");
+  submit.disabled = true;
+  try {
+    await request(`/api/deliverables/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify({decision, comment}) });
+    showMessage("Review decision recorded.", "success");
+    await loadReviewQueue();
+  } catch (error) {
+    showMessage(error.message, "error");
+    if (error.status === 403 || error.status === 409) await loadReviewQueue();
+  } finally { submit.disabled = false; }
+}
+
 
 let currentApplication = null;
 let profileAccessOwner = "";
@@ -193,7 +258,7 @@ function enterProfileEdit() { profileEditMode = true; if (professionalProfile) s
 function cancelProfileEdit() { profileEditMode = false; setProfileForm(professionalProfile || {}); }
 function addProfileTag(type) { const input = $(`#profile-${type}`); const value = input?.value.trim(); if (!value) return; if (!profileDraftTags[type].includes(value)) profileDraftTags[type].push(value); input.value = ""; renderTagEditor(type); }
 function addProfileEntry(type) { profileDraftLists[type].push({}); renderEntryEditor(type); const host = $(`#profile-${type === "evidence_references" ? "evidence" : type}-entries`); host?.querySelector(".repeatable-row:last-child input")?.focus(); }
-function renderReviews() { $("#reviews-list").innerHTML = emptyState("No review feedback yet", "Independent review decisions and requested revisions will appear after a deliverable is submitted."); }
+function renderReviews() { if (role.value === "reviewer") return loadReviewQueue(); $("#reviews-list").innerHTML = emptyState("Feedback history unavailable", "Open Deliverables to see the recorded status of each submitted version."); }
 
 // Existing admin lifecycle controls remain available in the developer harness.
 async function createOrganization() { const name = $("#organization-name").value.trim(); if (!name) return showMessage("Enter an organization name first.", "error"); try { const item = await request("/api/organizations", { method: "POST", body: JSON.stringify({ name }) }); $("#engagement-organization").value = item.id; showMessage(`Organization created: ${item.id}`, "success"); } catch (error) { showMessage(error.message, "error"); } }
@@ -227,7 +292,10 @@ $("#assignment-picker").addEventListener("change", event => {
   $("#submit-deliverable").disabled = !event.target.value;
   loadSelectedDeliverables();
 });
-$("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-deliverable").addEventListener("click", reviewDeliverable); $("#professional-profile-form").addEventListener("submit", saveProfessionalProfile);
+$("#submit-application").addEventListener("click", submitApplication); $("#submit-deliverable").addEventListener("click", submitDeliverable); $("#load-deliverables").addEventListener("click", loadSelectedDeliverables); $("#accept-deliverable").addEventListener("click", acceptDeliverable); $("#review-form").addEventListener("submit", reviewDeliverable);
+$("#review-deliverable-id").addEventListener("change", renderSubmission);
+$("#review-next").addEventListener("click", () => { reviewOffset += 20; loadReviewQueue(); });
+$("#review-prev").addEventListener("click", () => { reviewOffset = Math.max(0, reviewOffset - 20); loadReviewQueue(); }); $("#professional-profile-form").addEventListener("submit", saveProfessionalProfile);
 $("#edit-profile-button")?.addEventListener("click", enterProfileEdit); $("#cancel-profile-edit")?.addEventListener("click", cancelProfileEdit);
 $("#add-profile-skill")?.addEventListener("click", () => addProfileTag("skills")); $("#add-profile-specialization")?.addEventListener("click", () => addProfileTag("specializations"));
 $("#add-profile-experience")?.addEventListener("click", () => addProfileEntry("experience")); $("#add-profile-education")?.addEventListener("click", () => addProfileEntry("education")); $("#add-profile-portfolio")?.addEventListener("click", () => addProfileEntry("portfolio")); $("#add-profile-evidence")?.addEventListener("click", () => addProfileEntry("evidence_references"));
@@ -554,7 +622,14 @@ function syncRole() {
   const isClient = role.value === "client";
   actor.value = isAdmin ? "admin-1" : `${role.value}-1`;
   $("#legacy-admin-controls").hidden = !isAdmin;
-  $("#review-action").hidden = role.value !== "reviewer";
+  $("#review-action").hidden = true;
+  $("#review-paging").hidden = true;
+  const reviewTitle = role.value === "reviewer" ? "Submission review" : "Reviews & feedback";
+  $("#reviews-heading").textContent = reviewTitle;
+  $('#primary-nav [data-view="reviews"]').textContent = reviewTitle;
+  reviewOffset = 0;
+  reviewRows = [];
+  reviewRequest++;
   $("#client-acceptance").hidden = role.value !== "client";
   setProfessionalNavigation(false);
   $("#admin-nav").hidden = !isAdmin;

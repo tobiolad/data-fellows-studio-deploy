@@ -8,7 +8,8 @@ The first increment builds on the open PR #45 stack. Admission, the shared shell
 | Guarded admission, profile evidence editor and reviewer attestation | Implemented and tested with synthetic references |
 | Engagement creation and searchable, paged collections | Implemented and tested for engagement creation, search and details. Other collection controls are implemented but not fully validated |
 | Assignment selection and independently reviewed delivery lifecycle | Implemented and tested in synthetic modes |
-| Comprehensive reviewer, client project and AI operations workspaces | In development |
+| Reviewer worklist, version-specific independent decision and correction cycle | Implemented and tested |
+| Full reviewer history, client project workspace and AI operations control centre | In development |
 | Verified live payment and compensation | Not implemented |
 | Production identity, deployment, private evidence handling and storage validation | Blocked |
 

@@ -7,6 +7,7 @@ os.environ["STUDIO_TEST_MODE"] = "true"
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
+from backend.review_fixture import assert_review_workflow
 from backend.admission_fixture import admit_professional, assert_admission_gates
 from backend.app import app, store
 from backend.auth import Principal, TokenValidationError
@@ -34,6 +35,9 @@ class StudioLifecycleTests(unittest.TestCase):
         for environment in ("staging", "production"):
             with patch.dict(os.environ, {"STUDIO_ENV": environment, "STUDIO_TEST_MODE": "true"}):
                 self.assertEqual(self.client.get("/api/me", headers=self.admin).status_code, 503)
+
+    def test_scoped_review_queue_and_single_decision(self):
+        assert_review_workflow(self)
 
     def test_admission_policy_denials(self):
         assert_admission_gates(self, "synthetic-policy-applicant")

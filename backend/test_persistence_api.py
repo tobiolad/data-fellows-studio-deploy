@@ -1,6 +1,7 @@
 import os
 import unittest
 
+from backend.review_fixture import assert_review_workflow
 from backend.admission_fixture import admit_professional, assert_admission_gates
 
 from fastapi.testclient import TestClient
@@ -29,6 +30,9 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         os.environ.pop("STUDIO_PERSISTENCE", None)
         os.environ.pop("STUDIO_DATABASE_URL", None)
         app_module.postgres_repository.cache_clear()
+
+    def test_scoped_review_queue_and_single_decision(self):
+        assert_review_workflow(self)
 
     def test_admission_policy_denials(self):
         assert_admission_gates(self, "synthetic-policy-applicant")

@@ -100,7 +100,7 @@ async function main() {
       page.click("#submit-deliverable"),
     ]);
     await page.waitForFunction(() => Boolean(document.querySelector("#deliverable-id")?.value), null, { timeout: 10000 });
-    const deliverableId = await page.locator("#deliverable-id").inputValue();
+    let deliverableId = await page.locator("#deliverable-id").inputValue();
     assert.ok(deliverableId);
     await screenshot("playwright-professional-1440");
 
@@ -112,12 +112,43 @@ async function main() {
     const decision = { method: "POST", body: JSON.stringify({ decision: "approved", comment: "Independent synthetic review" }) };
     assert.equal((await api("admin-1", "admin", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 409);
     assert.equal((await api("reviewer-1", "reviewer", `/api/ai-runs/${run.body.id}/decision`, decision)).status, 200);
-    assert.equal((await api(professionalId, "professional", `/api/deliverables/${deliverableId}/review`, decision)).status, 409);
+    assert.equal((await api(professionalId, "professional", `/api/deliverables/${deliverableId}/review`, decision)).status, 403);
     const unauthorized = await api("client-1", "client", `/api/deliverables/${deliverableId}/review`, { method: "POST", body: JSON.stringify({ decision: "approved", comment: "not allowed" }) });
     assert.strictEqual(unauthorized.status, 403);
     await role("reviewer");
     await page.click('[data-view="reviews"]');
-    await fillAndClick({ "#review-deliverable-id": deliverableId, "#review-comment": "Independent synthetic review" }, "#review-deliverable");
+    await page.selectOption("#review-deliverable-id", deliverableId);
+    assert.match(await page.locator("#review-context").innerText(), /QA complete/);
+    await page.selectOption("#review-decision", "revision_requested");
+    await page.fill("#review-comment", "Add a comparison against the acceptance criteria.");
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/${deliverableId}/review`) && response.ok()),
+      page.click("#review-deliverable"),
+    ]);
+    await role("professional");
+    await page.click('[data-view="deliverables"]');
+    await page.selectOption("#assignment-picker", packageId);
+    await page.fill("#deliverable-title", "Revised delivery summary");
+    await page.fill("#deliverable-content", "The revision documents the weekly totals and comparison.");
+    const successor = await Promise.all([
+      page.waitForResponse(response => response.url().endsWith("/api/deliverables") && response.status() === 201),
+      page.click("#submit-deliverable"),
+    ]);
+    const version = await successor[0].json();
+    assert.equal(version.version, 2);
+    deliverableId = version.id;
+    await role("reviewer");
+    await page.selectOption("#review-deliverable-id", deliverableId);
+    assert.match(await page.locator("#review-context").innerText(), /Add a comparison against the acceptance criteria/);
+    await page.selectOption("#review-decision", "approved");
+    await page.fill("#review-comment", "Independent synthetic review");
+    await screenshot("reviewer-decision-1440");
+    await page.setViewportSize({width: 390, height: 844});
+    await screenshot("reviewer-decision-390");
+    await page.click("#review-deliverable");
+    await page.waitForFunction(() => document.querySelector("#identity-status").textContent === "Review decision recorded.");
+    assert.equal((await api("reviewer-1", "reviewer", `/api/deliverables/${deliverableId}/review`, decision)).status, 409);
+    await page.setViewportSize({width: 1440, height: 900});
     await screenshot("playwright-reviewer-1440");
 
     await role("client");

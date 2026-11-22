@@ -55,3 +55,9 @@ The mobile baseline put a truncated scrolling navigation strip above a second me
 ## Independent review
 
 Impeccable static and rendered results are retained in PLAYWRIGHT_RESULTS. Browser layout checks cover route selection, viewport width and keyboard disclosure. Manual screen-reader, cognitive walkthrough and sustained-load evaluation remain outstanding.
+
+## Reviewer worklist follow-up
+
+The earlier synthetic reviewer screen required a deliverable ID and exposed a decision control without the submitted work. The worklist now brings the submitted version, project, work package, acceptance criteria and five recent prior internal reviews into the decision form. The state model supports approval and request for revision. Terminal rejection and private evidence inspection remain outstanding.
+
+[Prior reviewer form](BEFORE_AND_AFTER_SCREENSHOTS/reviewer/before-1440.png) · [Updated desktop](BEFORE_AND_AFTER_SCREENSHOTS/reviewer/after-1440.png) · [Updated mobile](BEFORE_AND_AFTER_SCREENSHOTS/reviewer/after-390.png)

@@ -981,7 +981,7 @@ class PostgresRepository:
                 """SELECT e.organization_id FROM work_packages w
                    JOIN projects p ON p.id = w.project_id
                    JOIN engagements e ON e.id = p.engagement_id
-                   WHERE w.id = %s""",
+                   WHERE w.id = %s FOR UPDATE OF w""",
                 (package_id,),
             )
             row = cursor.fetchone()
@@ -989,9 +989,13 @@ class PostgresRepository:
                 raise LookupError("Work package not found")
             organization_id = row[0]
             cursor.execute(
-                """SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('owner', 'client') AND revoked_at IS NULL
-                   UNION SELECT 1 FROM assignments WHERE work_package_id = %s AND professional_id = %s AND status = 'accepted'""",
-                (organization_id, submitted_by, package_id, submitted_by),
+                """SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'owner' AND revoked_at IS NULL
+                   UNION SELECT 1 FROM assignments a JOIN professional_admissions p ON p.professional_id = a.professional_id
+                   WHERE a.work_package_id = %s AND a.professional_id = %s AND a.status = 'accepted'
+                   AND (a.expires_at IS NULL OR a.expires_at > now()) AND p.status = 'approved'
+                   AND EXISTS (SELECT 1 FROM memberships m WHERE m.organization_id = %s
+                       AND m.actor_id = a.professional_id AND m.role = 'professional' AND m.revoked_at IS NULL)""",
+                (organization_id, submitted_by, package_id, submitted_by, organization_id),
             )
             if cursor.fetchone() is None:
                 raise PermissionError("Only an authorized delivery resource may submit")
@@ -1050,6 +1054,30 @@ class PostgresRepository:
                 for row in cursor.fetchall()
             ]
 
+    def reviewer_queue(self, reviewer: str, offset: int, limit: int) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """WITH queue AS (
+                     SELECT d.id, d.work_package_id, d.title, d.version, d.content, d.created_at,
+                            p.name AS project_name, w.title AS package_title, w.acceptance_criteria
+                     FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id
+                     JOIN projects p ON p.id = w.project_id JOIN engagements e ON e.id = p.engagement_id
+                     WHERE d.status = 'under_review' AND d.submitted_by <> %s AND EXISTS (
+                       SELECT 1 FROM memberships m WHERE m.organization_id = e.organization_id
+                       AND m.actor_id = %s AND m.revoked_at IS NULL AND m.role IN ('owner','reviewer'))
+                     ORDER BY d.created_at, d.id LIMIT %s OFFSET %s)
+                   SELECT q.id, q.title, q.version, q.content, q.project_name, q.package_title, q.acceptance_criteria,
+                          COALESCE((SELECT jsonb_agg(to_jsonb(history) ORDER BY history.version DESC) FROM (
+                            SELECT d.version, r.decision, r.comment FROM deliverable_reviews r
+                            JOIN deliverables d ON d.id = r.deliverable_id
+                            WHERE d.work_package_id = q.work_package_id AND d.version < q.version
+                            ORDER BY d.version DESC, r.created_at DESC LIMIT 5) history), '[]'::jsonb)
+                   FROM queue q ORDER BY q.created_at, q.id""", (reviewer, reviewer, limit, offset))
+            return [{"id": str(row[0]), "title": row[1], "version": row[2], "content": row[3],
+                     "project_name": row[4], "package_title": row[5], "acceptance_criteria": row[6],
+                     "previous_reviews": row[7]} for row in cursor.fetchall()]
+
     def review_deliverable(self, deliverable_id: UUID, reviewer_id: str, decision: str, comment: str) -> dict[str, Any]:
         with self.transaction() as connection:
             cursor = connection.cursor()
@@ -1057,7 +1085,7 @@ class PostgresRepository:
                 """SELECT d.work_package_id, d.version, d.title, d.content, d.submitted_by, d.status, e.organization_id
                    FROM deliverables d JOIN work_packages w ON w.id = d.work_package_id
                    JOIN projects p ON p.id = w.project_id JOIN engagements e ON e.id = p.engagement_id
-                   WHERE d.id = %s""",
+                   WHERE d.id = %s FOR UPDATE OF d""",
                 (deliverable_id,),
             )
             row = cursor.fetchone()
@@ -1066,9 +1094,11 @@ class PostgresRepository:
             package_id, version, title, content, submitted_by, current_status, organization_id = row
             if submitted_by == reviewer_id:
                 raise ValueError("Independent review is required")
-            cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL", (organization_id, reviewer_id))
+            cursor.execute("SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role IN ('reviewer', 'owner') AND revoked_at IS NULL FOR SHARE", (organization_id, reviewer_id))
             if cursor.fetchone() is None:
                 raise PermissionError("Reviewer is not authorized for this organization")
+            if current_status != "under_review":
+                raise ValueError("This version has already received a decision")
             cursor.execute("UPDATE deliverables SET status = %s WHERE id = %s", (decision, deliverable_id))
             cursor.execute("INSERT INTO deliverable_reviews(id, deliverable_id, reviewer_id, decision, comment) VALUES (%s, %s, %s, %s, %s)", (uuid4(), deliverable_id, reviewer_id, decision, comment))
             self._audit(cursor, organization_id, reviewer_id, f"deliverable.{decision}", "deliverable", str(deliverable_id), {"comment": comment})

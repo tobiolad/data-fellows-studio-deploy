@@ -22,3 +22,7 @@ Impeccable scanned frontend source and the rendered mobile professional entry. T
 ## Reproduction
 
 Start the frontend at port 5173 and a local synthetic API. Use a disposable database with migrations 001–008 for PostgreSQL. Set STUDIO_API_URL, STUDIO_ARTIFACT_DIR, NODE_PATH and PLAYWRIGHT_CHROMIUM for the local environment. Run synthetic-lifecycle first, then the profile, client, admin, engagement and UI scripts. Run workspace-navigation after seeding professional-1 through the lifecycle. For a baseline, serve the parent frontend at the same origin, set STUDIO_BROWSER_URL to its index page and STUDIO_BASELINE=1. Capture before and after against the same seeded database.
+
+## Reviewer worklist increment
+
+The revised lifecycle ran once per adapter. A reviewer requested a correction to version 1. The professional submitted version 2 using an accepted assignment. The reviewer inspected the preceding decision and approved version 2. The authorized client accepted that version and the project reached completion. Neither walkthrough reported a page exception or failed request. The reviewer decision was captured at 1440px and 390px.
