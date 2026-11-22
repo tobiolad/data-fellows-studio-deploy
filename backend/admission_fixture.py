@@ -14,7 +14,7 @@ def admit_professional(client, professional_id, reviewer):
     client.post(path + "/review", headers=reviewer, json={"status": "under_review"}).raise_for_status()
     response = client.post(path + "/review", headers=reviewer, json={
         "status": "approved", "reason": "Reviewed the synthetic work sample against the delivery criteria",
-        "reviewed_profile_version": saved.json()["version"],
+        "reviewed_profile_version": saved.json()["version"], "verified_evidence_indices": [0],
     })
     response.raise_for_status()
     return response
@@ -44,6 +44,11 @@ def assert_admission_gates(case, candidate):
     updated.raise_for_status()
     case.assertEqual(check(), 409)
     review["reviewed_profile_version"] = updated.json()["version"]
+    case.assertEqual(check(), 409)
+    review["verified_evidence_indices"] = [99]
+    case.assertEqual(check(), 409)
+    review["verified_evidence_indices"] = [0]
+    case.assertEqual(client.put(path + "/profile", headers=case.admin, json=profile).status_code, 403)
     case.assertEqual(client.post(path + "/review", headers={"Authorization": f"Bearer test:{candidate}:reviewer"}, json=review).status_code, 409)
     client.post(path + "/review", headers=case.admin, json={"status": "assessment", "missing_information": ["Work history"]}).raise_for_status()
     case.assertEqual(check(), 409)

@@ -117,6 +117,16 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             self._require_owner(cursor, organization_id, actor)
+            if role == "professional":
+                cursor.execute("""SELECT revoked_at FROM memberships WHERE organization_id=%s AND actor_id=%s
+                               AND role='professional' FOR UPDATE""", (organization_id, actor_id))
+                previous = cursor.fetchone()
+                if previous is None or previous[0] is not None:
+                    # Older releases left invitation rows behind after revocation.
+                    cursor.execute("""UPDATE assignments a SET status='revoked' FROM work_packages w
+                                   JOIN projects p ON p.id=w.project_id JOIN engagements e ON e.id=p.engagement_id
+                                   WHERE a.work_package_id=w.id AND e.organization_id=%s AND a.professional_id=%s
+                                   AND a.status IN ('accepted','invited')""", (organization_id, actor_id))
             cursor.execute(
                 """INSERT INTO memberships(organization_id, actor_id, role)
                    VALUES (%s, %s, %s)
@@ -686,13 +696,14 @@ class PostgresRepository:
             existing = cursor.fetchone()
             if existing is None:
                 raise LookupError("Professional application not found")
+            verified_evidence = []
             if review["status"] == "approved":
                 cursor.execute("SELECT version, skills, evidence_references FROM professional_profiles WHERE professional_id = %s FOR SHARE", (professional_id,))
                 row = cursor.fetchone()
                 profile = dict(zip(("version", "skills", "evidence_references"), row)) if row else None
                 application = dict(zip(("status", "missing_information", "assessment_requests"), existing))
-                check_approval(application, profile, review, professional_id, actor)
-            if review["status"] != "approved":
+                verified_evidence = check_approval(application, profile, review, professional_id, actor)
+            if existing[0] != "approved" or review["status"] != "approved":
                 cursor.execute("UPDATE assignments SET status='revoked' WHERE professional_id=%s AND status IN ('invited','accepted')", (professional_id,))
             terminal = review["status"] in {"approved", "declined", "revoked"}
             cursor.execute(
@@ -712,7 +723,7 @@ class PostgresRepository:
             )
             row = cursor.fetchone()
             self._audit(cursor, None, actor, f"professional.admission_{review['status']}", "professional_admission", professional_id,
-                        {"policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": existing[0], "reason": review.get("reason", ""), "reviewed_profile_version": review.get("reviewed_profile_version"), "missing_information_count": len(review.get("missing_information", []))})
+                        {"verified_evidence": verified_evidence, "policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": existing[0], "reason": review.get("reason", ""), "reviewed_profile_version": review.get("reviewed_profile_version"), "missing_information_count": len(review.get("missing_information", []))})
             return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
                     "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7], "missing_information": row[8],
                     "assessment_requests": row[9], "evidence_references": row[10], "next_action": row[11]}

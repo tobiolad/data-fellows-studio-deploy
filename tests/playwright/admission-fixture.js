@@ -13,7 +13,7 @@ async function admitProfessional(api, id) {
   });
   await send('reviewer-1', 'reviewer', '/review', 'POST', {status: 'under_review'});
   await send('reviewer-1', 'reviewer', '/review', 'POST', {
-    status: 'approved', reason: 'Reviewed synthetic work sample', reviewed_profile_version: profile.version,
+    status: 'approved', reason: 'Reviewed synthetic work sample', reviewed_profile_version: profile.version, verified_evidence_indices: [0],
   });
 }
 module.exports = { admitProfessional };

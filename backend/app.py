@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval
+from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval, evidence_status
 from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
 from backend.persistence import PersistenceConfigurationError, PostgresRepository
 
@@ -373,6 +373,7 @@ class ProfessionalProfileUpdate(BaseModel):
 
 
 class AdmissionReviewUpdate(BaseModel):
+    verified_evidence_indices: list[int] = Field(default_factory=list, max_length=20)
     reviewed_profile_version: int | None = Field(default=None, ge=1)
     status: Literal["under_review", "assessment", "approved", "declined", "revoked"]
     reason: str = Field(default="", max_length=4000)
@@ -463,12 +464,18 @@ def list_organizations(request: Request) -> list[dict]:
 def grant_member(organization_id: str, body: MemberGrant, request: Request) -> dict:
     actor = identity(request)
     if postgres_mode():
-        postgres_repository().grant_membership(organization_uuid(organization_id), body.actor_id, body.role, actor.actor_id)
+        try:
+            postgres_repository().grant_membership(organization_uuid(organization_id), body.actor_id, body.role, actor.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
         return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
     if organization_id not in store.organizations:
         raise HTTPException(status_code=404, detail="Organization not found")
     member(actor, organization_id, "owner")
-    store.memberships.setdefault((body.actor_id, organization_id), set()).add(body.role)
+    roles = store.memberships.setdefault((body.actor_id, organization_id), set())
+    if body.role == "professional" and "professional" not in roles:
+        revoke_assignments(body.actor_id, organization_id)
+    roles.add(body.role)
     audit_response(actor, "organization_membership", f"{body.actor_id}:{organization_id}", "membership.granted", organization_id)
     return {"actor_id": body.actor_id, "organization_id": organization_id, "role": body.role}
 
@@ -596,13 +603,17 @@ def get_professional_profile(professional_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Professional profile has not been started")
     if not postgres_mode():
         record = {**record, "application_status": store.professional_admissions[professional_id]["status"]}
-    return {**record, "evidence_references": [{**ref, "status": "unverified"} for ref in record.get("evidence_references", [])]}
+    history = (postgres_repository().admission_history(professional_id) if postgres_mode() else
+               [event["metadata"] for event in store.audit if event["resource_type"] == "professional_admission"
+                and event["resource_id"] == professional_id])
+    return {**record, "evidence_references": evidence_status(record, history)}
 
 
 @app.put("/api/professionals/{professional_id}/profile")
 def update_professional_profile(professional_id: str, body: ProfessionalProfileUpdate, request: Request) -> dict:
     actor = identity(request)
-    _profile_access(actor, professional_id)
+    if actor.actor_id != professional_id or "professional" not in actor.roles:
+        raise HTTPException(403, "Only the applicant can edit their profile")
     payload = body.model_dump(exclude_none=True)
     for evidence in payload.get("evidence_references", []):
         evidence["status"] = "unverified"
@@ -686,10 +697,11 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
     record = store.professional_admissions.get(professional_id)
     if not record:
         raise HTTPException(status_code=404, detail="Professional application not found")
+    verified_evidence = []
     previous_status = record["status"]
     if body.status == "approved":
         try:
-            check_approval(record, store.professional_profiles.get(professional_id),
+            verified_evidence = check_approval(record, store.professional_profiles.get(professional_id),
                            body.model_dump(), professional_id, actor.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -706,12 +718,13 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
     }
     store.professional_admissions[professional_id] = record
     if body.status == "approved":
+        revoke_assignments(professional_id)
         store.approved_professionals.add(professional_id)
     else:
         store.approved_professionals.discard(professional_id)
         revoke_assignments(professional_id)
     store.event(actor, f"professional.admission_{body.status}", "professional_admission", professional_id,
-                {"policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": previous_status, "reason": body.reason, "reviewed_profile_version": body.reviewed_profile_version})
+                {"verified_evidence": verified_evidence, "policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": previous_status, "reason": body.reason, "reviewed_profile_version": body.reviewed_profile_version})
     return record
 
 

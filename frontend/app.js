@@ -400,16 +400,34 @@ async function openAdmissionReview(professionalId) {
     }
     $("#admission-review-form").before(details);
     const evidence = document.createElement("ul");
-    for (const ref of profile.evidence_references || []) {
+    for (const [index, ref] of (profile.evidence_references || []).entries()) {
       const entry = document.createElement("li");
-      entry.textContent = [ref.label, ref.reference].filter(Boolean).join(" · ");
+      const label = document.createElement("label");
+      const checked = document.createElement("input");
+      checked.type = "checkbox";
+      checked.name = "verified-evidence";
+      checked.value = index;
+      checked.disabled = !ref.reference?.startsWith("private://");
+      label.append(checked, " I verified " + [ref.label, ref.reference].filter(Boolean).join(" · "));
+      entry.append(label);
       evidence.append(entry);
     }
     $("#admission-review-form").before(evidence);
+    const history = await request(`/api/professionals/${encodeURIComponent(professionalId)}/admission-history`);
+    const prior = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Admission history";
+    prior.append(summary);
+    for (const event of history) {
+      const row = document.createElement("p");
+      row.textContent = [dateLabel(event.created_at), statusLabel(event.action), event.reason, event.policy_version].filter(Boolean).join(" · ");
+      prior.append(row);
+    }
+    $("#admission-review-form").before(prior);
     openAdminDrawer();
     $("#admission-review-status").value = ["pending", "submitted", "under_review", "assessment"].includes(application.status) ? "under_review" : application.status;
     $("#admission-review-reason").value = application.decision_reason || ""; $("#admission-review-next").value = application.next_action || ""; $("#admission-review-missing").value = (application.missing_information || []).join("\n");
-    $("#admission-review-form").addEventListener("submit", async (event) => { event.preventDefault(); const status = $("#admission-review-status").value; const reason = $("#admission-review-reason").value.trim(); if (["approved", "declined", "revoked"].includes(status) && !reason) { $("#admission-review-status-message").textContent = "A decision reason is required."; return; } try { await request(`/api/professionals/${encodeURIComponent(professionalId)}/review`, { method: "POST", body: JSON.stringify({ status, reason, reviewed_profile_version: status === "approved" && $("#confirm-qualifications").checked ? profile.version : null, next_action: $("#admission-review-next").value.trim(), missing_information: $("#admission-review-missing").value.split("\n").map((item) => item.trim()).filter(Boolean), assessment_requests: [] }) }); $("#admission-review-status-message").textContent = "Review decision saved and audited."; showMessage("Admission review saved.", "success"); await loadAdminOverview(); } catch (error) { $("#admission-review-status-message").textContent = error.message; } });
+    $("#admission-review-form").addEventListener("submit", async (event) => { event.preventDefault(); const status = $("#admission-review-status").value; const reason = $("#admission-review-reason").value.trim(); if (["approved", "declined", "revoked"].includes(status) && !reason) { $("#admission-review-status-message").textContent = "A decision reason is required."; return; } try { await request(`/api/professionals/${encodeURIComponent(professionalId)}/review`, { method: "POST", body: JSON.stringify({ status, reason, verified_evidence_indices: status === "approved" ? [...evidence.querySelectorAll("input:checked")].map(input => Number(input.value)) : [], reviewed_profile_version: status === "approved" && $("#confirm-qualifications").checked ? profile.version : null, next_action: $("#admission-review-next").value.trim(), missing_information: $("#admission-review-missing").value.split("\n").map((item) => item.trim()).filter(Boolean), assessment_requests: [] }) }); $("#admission-review-status-message").textContent = "Review decision saved and audited."; showMessage("Admission review saved.", "success"); await loadAdminOverview(); } catch (error) { $("#admission-review-status-message").textContent = error.message; } });
   } catch (error) { showMessage(error.message, "error"); }
 }
 async function decideAdminAI(runId, decision) { try { await request(`/api/ai-runs/${encodeURIComponent(runId)}/decision`, { method: "POST", body: JSON.stringify({ decision, comment: "Mission Control decision recorded by an authorized admin." }) }); showMessage(`AI artifact ${decision}.`, "success"); await loadAdminOverview(); } catch (error) { showMessage(error.message, "error"); } }

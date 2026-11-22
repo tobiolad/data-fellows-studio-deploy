@@ -44,7 +44,12 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         self.assertEqual(self.client.get(path + "/admission-history", headers=owner).status_code, 403)
         history = self.client.get(path + "/admission-history", headers=self.admin).json()
         self.assertEqual(history[0]["previous_status"], "under_review")
-        self.assertEqual(history[0]["policy_version"], "studio-admission-v1")
+        self.assertEqual(history[0]["policy_version"], "studio-admission-v2")
+        self.assertEqual(len(history[0]["verified_evidence"]), 1)
+        profile = self.client.get(path + "/profile", headers=owner).json()
+        self.assertEqual(profile["evidence_references"][0]["status"], "reviewer verified")
+        self.client.put(path + "/profile", headers=owner, json=profile).raise_for_status()
+        self.assertEqual(self.client.get(path + "/profile", headers=owner).json()["evidence_references"][0]["status"], "unverified")
         self.assertEqual(history[0]["reviewed_profile_version"], 1)
         self.assertEqual(history[0]["reviewer"], before["decided_by"])
 
