@@ -23,6 +23,7 @@ class EntraTokenTests(unittest.TestCase):
         cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         cls.settings = EntraSettings(
             tenant_id="synthetic-tenant",
+            web_client_id="synthetic-web",
             audience="api://studio",
             issuer="https://issuer.example/synthetic-tenant/v2.0",
             jwks_url="https://issuer.example/keys",
@@ -38,7 +39,7 @@ class EntraTokenTests(unittest.TestCase):
             "sub": "subject-1",
             "iat": int(time.time()),
             "exp": int(time.time()) + 300,
-            "roles": ["Reviewer"],
+            "roles": ["reviewer"], "azp": self.settings.web_client_id, "scp": "Studio.Access", "ver": "2.0",
         }
         claims.update(overrides)
         return jwt.encode(claims, self.private_key, algorithm="RS256", headers={"kid": "test-key"})
@@ -47,7 +48,13 @@ class EntraTokenTests(unittest.TestCase):
         principal = self.validator.validate(self.token())
         self.assertEqual(principal.actor_id, "staff-1")
         self.assertEqual(principal.tenant_id, "synthetic-tenant")
-        self.assertEqual(principal.roles, {"Reviewer"})
+        self.assertEqual(principal.roles, {"reviewer"})
+
+    def test_only_delegated_studio_web_sessions_are_accepted(self):
+        for claims in ({"azp": "other-web"}, {"scp": ""}, {"scp": "other.Access"}, {"ver": "1.0"}, {"oid": None},
+                       {"roles": []}, {"roles": ["client", "admin"]}, {"idtyp": "app"}):
+            with self.subTest(claims=claims), self.assertRaises(TokenValidationError):
+                self.validator.validate(self.token(**claims))
 
     def test_wrong_audience_is_rejected(self) -> None:
         with self.assertRaises(TokenValidationError):
@@ -58,8 +65,8 @@ class EntraTokenTests(unittest.TestCase):
             self.validator.validate(self.token(tid="other-tenant"))
 
     def test_token_roles_do_not_replace_membership_checks(self) -> None:
-        principal = self.validator.validate(self.token(roles=["Administrator"]))
-        self.assertIn("Administrator", principal.roles)
+        principal = self.validator.validate(self.token(roles=["admin"]))
+        self.assertIn("admin", principal.roles)
         self.assertEqual(principal.actor_id, "staff-1")
 
 

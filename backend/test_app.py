@@ -413,6 +413,7 @@ class StudioLifecycleTests(unittest.TestCase):
                 "STUDIO_ENTRA_ENABLED": "true",
                 "STUDIO_ENTRA_TENANT_ID": "synthetic-tenant",
                 "STUDIO_ENTRA_AUDIENCE": "api://studio",
+                "STUDIO_ENTRA_WEB_CLIENT_ID": "synthetic-web",
                 "STUDIO_PERSISTENCE": "postgres",
                 "STUDIO_DATABASE_URL": "postgresql://placeholder",
             },
@@ -429,6 +430,21 @@ class StudioLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173")
+
+    def test_platform_session_writes_require_the_exact_origin(self):
+        from unittest.mock import Mock
+        validator = Mock()
+        validator.validate.return_value = Principal("staff", "test", frozenset({"admin"}), {})
+        settings = {"STUDIO_TEST_MODE": "false", "STUDIO_ENTRA_ENABLED": "true", "STUDIO_PLATFORM_AUTH": "easy-auth",
+                    "STUDIO_PUBLIC_ORIGIN": "https://studio.example"}
+        headers = {"x-ms-token-aad-access-token": "local-fixture"}
+        with patch.dict(os.environ, settings), patch.object(app_module, "entra_validator", return_value=validator):
+            for origin in ("", "https://other.example"):
+                response = self.client.post("/api/organizations", headers={**headers, "origin": origin}, json={"name": "Sample"})
+                self.assertEqual(response.status_code, 403)
+            response = self.client.post("/api/organizations", headers={**headers, "origin": settings["STUDIO_PUBLIC_ORIGIN"]}, json={"name": "Sample"})
+            self.assertEqual(response.status_code, 201)
+            validator.validate.assert_called_once()
 
     def test_entra_enabled_requests_use_validator_boundary(self) -> None:
         class FakeValidator:

@@ -1,7 +1,7 @@
 import { projectChannel } from "./project-channel.js";
-const api = window.STUDIO_API_URL || "http://localhost:8100";
 const syntheticHarness = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)
   && new URLSearchParams(location.search).get("harness") === "synthetic";
+const api = syntheticHarness ? (window.STUDIO_API_URL || "http://localhost:8100") : location.origin;
 const role = document.querySelector("#role");
 const actor = document.querySelector("#actor");
 const identityStatus = document.querySelector("#identity-status");
@@ -14,13 +14,16 @@ let requestedProfessionalView = location.hash.slice(1) || "overview";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-function token() { return `Bearer test:${actor.value.trim()}:${role.value}`; }
+function token() { return syntheticHarness ? `Bearer test:${actor.value.trim()}:${role.value}` : actor.value; }
 async function request(path, options = {}) {
   const identity = token();
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {
-    throw new Error("This workspace requires a configured sign-in provider.");
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (syntheticHarness) headers.Authorization = identity;
+  const response = await fetch(api + path, { ...options, headers, credentials: syntheticHarness ? "omit" : "same-origin", cache: "no-store", redirect: "error" });
+  if (!syntheticHarness && response.status === 401) {
+    showSignIn("Sign in to continue.");
+    throw new Error("Sign in to continue.");
   }
-  const response = await fetch(`${api}${path}`, { ...options, headers: { Authorization: token(), "Content-Type": "application/json", ...(options.headers || {}) } });
   const payload = await response.json().catch(() => ({}));
   if (identity !== token()) throw new Error("Workspace identity changed.");
   if (!response.ok) throw Object.assign(new Error(payload.detail || `Request failed (${response.status})`), { status: response.status });
@@ -641,7 +644,7 @@ function syncRole() {
   $("#admin-detail-drawer")?.close();
   const isAdmin = role.value === "admin";
   const isClient = role.value === "client";
-  actor.value = isAdmin ? "admin-1" : `${role.value}-1`;
+  if (syntheticHarness) actor.value = isAdmin ? "admin-1" : `${role.value}-1`;
   $("#legacy-admin-controls").hidden = !isAdmin;
   $("#review-action").hidden = true;
   $("#review-paging").hidden = true;
@@ -728,5 +731,31 @@ engagementForm.addEventListener("submit", async event => {
 });
 
 $("#developer-tools").hidden = !syntheticHarness;
-syncRole();
-refresh();
+function showSignIn(message) {
+  actor.value = "";
+  $(".app-shell").hidden = true;
+  $("#sign-in-panel").hidden = false;
+  $("#sign-in-status").textContent = message;
+}
+async function startWorkspace() {
+  if (!syntheticHarness) {
+    showSignIn("Connecting to your workspace…");
+    try {
+      const me = await request("/api/me");
+      if (me.authentication !== "entra" || me.roles.length !== 1 || !["professional","admin","reviewer","client"].includes(me.roles[0]))
+        throw new Error("Your account needs one assigned Studio role.");
+      actor.value = me.id;
+      role.value = me.roles[0];
+      if (!role.value) throw new Error("Your workspace role is unavailable.");
+      const signOut = document.createElement("a");
+      signOut.href = "/.auth/logout?post_logout_redirect_uri=/";
+      signOut.textContent = "Sign out";
+      $("#workspace-navigation").append(signOut);
+    } catch (error) { return showSignIn(error.message); }
+  }
+  $("#sign-in-panel").hidden = true;
+  $(".app-shell").hidden = false;
+  syncRole();
+  await refresh();
+}
+startWorkspace();

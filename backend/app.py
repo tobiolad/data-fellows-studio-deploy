@@ -127,6 +127,15 @@ def identity(request: Request) -> Identity:
         return Identity(parts[0], roles)
     if os.getenv("STUDIO_ENTRA_ENABLED", "false").lower() != "true":
         raise HTTPException(status_code=503, detail="Microsoft Entra authentication is not configured")
+    if not header and os.getenv("STUDIO_PLATFORM_AUTH") == "easy-auth":
+        access_token = request.headers.get("x-ms-token-aad-access-token")
+        if access_token:
+            origin = os.getenv("STUDIO_PUBLIC_ORIGIN", "")
+            if request.method not in {"GET", "HEAD", "OPTIONS"} and (
+                not origin.startswith("https://") or request.headers.get("origin") != origin
+            ):
+                raise HTTPException(status_code=403, detail="A same-origin Studio session is required")
+            header = "Bearer " + access_token
     if not header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="A workforce access token is required")
     try:
@@ -393,6 +402,7 @@ def ready() -> dict:
             os.getenv("STUDIO_ENTRA_ENABLED", "false").lower() == "true"
             and bool(os.getenv("STUDIO_ENTRA_TENANT_ID", "").strip())
             and bool(os.getenv("STUDIO_ENTRA_AUDIENCE", "").strip())
+            and bool(os.getenv("STUDIO_ENTRA_WEB_CLIENT_ID", "").strip())
         ),
         "postgres_configured": (test_mode and deployment_env not in {"staging", "production"})
         or (persistence == "postgres" and bool(os.getenv("STUDIO_DATABASE_URL", "").strip())),

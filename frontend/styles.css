@@ -372,3 +372,6 @@ dialog.admin-detail-drawer::backdrop { background: rgb(11 33 70 / 30%); }
 #review-context h3 { font-size: 16px; }
 .submission-content { white-space: pre-wrap; }
 #review-form button { justify-self: start; }
+
+.app-shell[hidden], #sign-in-panel[hidden] { display: none; }
+#sign-in-panel { max-width: 32rem; margin: 10vh auto; }

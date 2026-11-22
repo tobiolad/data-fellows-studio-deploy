@@ -26,16 +26,18 @@ class EntraSettings:
     audience: str
     issuer: str
     jwks_url: str
+    web_client_id: str
 
     @classmethod
     def from_environment(cls) -> "EntraSettings":
         tenant_id = os.getenv("STUDIO_ENTRA_TENANT_ID", "").strip()
         audience = os.getenv("STUDIO_ENTRA_AUDIENCE", "").strip()
-        if not tenant_id or not audience:
-            raise TokenValidationError("STUDIO_ENTRA_TENANT_ID and STUDIO_ENTRA_AUDIENCE are required")
+        web_client_id = os.getenv("STUDIO_ENTRA_WEB_CLIENT_ID", "").strip()
+        if not tenant_id or not audience or not web_client_id:
+            raise TokenValidationError("Studio tenant, audience and web client ID are required")
         issuer = os.getenv("STUDIO_ENTRA_ISSUER", f"https://login.microsoftonline.com/{tenant_id}/v2.0").strip()
         jwks_url = os.getenv("STUDIO_ENTRA_JWKS_URL", f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys").strip()
-        return cls(tenant_id=tenant_id, audience=audience, issuer=issuer, jwks_url=jwks_url)
+        return cls(tenant_id=tenant_id, audience=audience, issuer=issuer, jwks_url=jwks_url, web_client_id=web_client_id)
 
 
 class SigningKeyProvider(Protocol):
@@ -122,9 +124,16 @@ class EntraTokenValidator:
         token_tenant = claims.get("tid")
         if token_tenant != self.settings.tenant_id:
             raise TokenValidationError("Bearer token tenant does not match configuration")
-        actor_id = claims.get("oid") or claims.get("sub")
+        if claims.get("ver") != "2.0" or claims.get("azp") != self.settings.web_client_id:
+            raise TokenValidationError("Studio requires a v2 access token issued to its web client")
+        scopes = claims.get("scp")
+        if not isinstance(scopes, str) or "Studio.Access" not in scopes.split() or claims.get("idtyp") == "app":
+            raise TokenValidationError("A delegated Studio access token is required")
+        actor_id = claims.get("oid")
         if not actor_id:
             raise TokenValidationError("Bearer token has no stable subject")
         raw_roles = claims.get("roles", [])
         roles = frozenset(role for role in raw_roles if isinstance(role, str)) if isinstance(raw_roles, list) else frozenset()
+        if len(roles) != 1 or not roles.issubset({"admin", "reviewer", "professional", "client"}):
+            raise TokenValidationError("Exactly one Studio workspace role is required")
         return Principal(actor_id=actor_id, tenant_id=token_tenant, roles=roles, claims=claims)
