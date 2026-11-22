@@ -407,6 +407,14 @@ def ready() -> dict:
         "postgres_configured": (test_mode and deployment_env not in {"staging", "production"})
         or (persistence == "postgres" and bool(os.getenv("STUDIO_DATABASE_URL", "").strip())),
     }
+    if deployment_env in {"staging", "production"}:
+        checks["schema_current"] = False
+        if all(value for key, value in checks.items() if key != "schema_current"):
+            try:
+                checks["schema_current"] = postgres_repository().schema_current()
+            except Exception:
+                # Never include database host, connection details or driver errors in health output.
+                pass
     if not all(checks.values()):
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
     return {"status": "ready", "environment": deployment_env, "persistence": persistence, "checks": checks}

@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -12,14 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  protection:
+    permissions:
+      contents: read
+      actions: read
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify existing inventory environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ops/check-release-environment.sh azure-inventory
+
   inventory:
+    needs: protection
+    permissions:
+      contents: read
+      id-token: write
     name: Inventory approved staging boundary
     runs-on: ubuntu-latest
     environment: azure-inventory
     timeout-minutes: 10
     steps:
       - name: Sign in with GitHub OIDC
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -99,19 +117,25 @@ jobs:
           check_subnet "$PRIVATE_ENDPOINT_SUBNET" ""
 
           if env_json="$(az containerapp env show --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_ENVIRONMENT" -o json 2>/dev/null)"; then
-            echo "- Container Apps environment: $(jq -r '.name' <<<"$env_json") state=$(jq -r '.provisioningState // \"unknown\"' <<<"$env_json") publicNetworkAccess=$(jq -r '.publicNetworkAccess // \"unknown\"' <<<"$env_json")" | tee -a "$summary"
-            [[ "$(jq -r '.provisioningState // ""' <<<"$env_json")" == "Succeeded" ]] && pass "Container Apps environment is provisioned." || review "Container Apps environment is not in Succeeded state."
+            echo "- Container Apps environment: $(jq -r '.name' <<<"$env_json") state=$(jq -r '.properties.provisioningState // .provisioningState // "unknown"' <<<"$env_json") publicNetworkAccess=$(jq -r '.properties.publicNetworkAccess // .publicNetworkAccess // "unknown"' <<<"$env_json")" | tee -a "$summary"
+            [[ "$(jq -r '.properties.provisioningState // .provisioningState // ""' <<<"$env_json")" == "Succeeded" ]] && pass "Container Apps environment is provisioned." || review "Container Apps environment is not in Succeeded state."
             review "Environment/control-plane settings do not prove that a workload can pull from ACR or reach private dependencies."
           else
             fail "Container Apps environment $CONTAINER_ENVIRONMENT is unavailable or not readable."
           fi
 
           if acr_json="$(az acr show --resource-group "$RESOURCE_GROUP" --name "$REGISTRY_NAME" -o json 2>/dev/null)"; then
-            echo "- ACR: loginServer=$(jq -r '.loginServer' <<<"$acr_json") sku=$(jq -r '.sku.name' <<<"$acr_json") adminEnabled=$(jq -r '.adminUserEnabled // false' <<<"$acr_json") publicNetworkAccess=$(jq -r '.publicNetworkAccess // "unknown"' <<<"$acr_json")" | tee -a "$summary"
+            echo "- ACR: loginServer=$(jq -r '.loginServer' <<<"$acr_json") sku=$(jq -r '.sku.name' <<<"$acr_json") adminEnabled=$(jq -r '.adminUserEnabled // false' <<<"$acr_json") publicNetworkAccess=$(jq -r '.properties.publicNetworkAccess // .publicNetworkAccess // "unknown"' <<<"$acr_json")" | tee -a "$summary"
             [[ "$(jq -r '.adminUserEnabled // false' <<<"$acr_json")" == "false" ]] && pass "ACR admin authentication is disabled." || fail "ACR admin authentication is enabled; use managed identity and disable admin credentials."
           else
             fail "ACR $REGISTRY_NAME is unavailable or not readable."
           fi
 
+          # Expose resource types and names only. Never enumerate keys, secrets, or connection strings.
+          az resource list --resource-group "$RESOURCE_GROUP" --query "[?contains(name, 'studio')].{name:name,type:type}" -o table
+          offer="$(az rest --method get --url "https://management.azure.com/subscriptions/$EXPECTED_SUBSCRIPTION?api-version=2022-12-01" --query subscriptionPolicies.quotaId -o tsv 2>/dev/null || true)"
+          if [[ -n "$offer" ]]; then
+            echo "Subscription quota policy: $offer" >> "$summary"
+          fi
           review "Subscription-level billing, sponsorship balance, expiry and provider-side quotas are not proven by Reader access to this resource group."
           review "PostgreSQL, private Blob, Key Vault, private DNS, queue, managed identities, monitoring and application revisions are inventory gaps until their approved resources exist."

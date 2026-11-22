@@ -45,6 +45,7 @@ class PostgresIntegrationTests(unittest.TestCase):
     def test_migrations_are_idempotent(self) -> None:
         self.repository.migrate()
         self.repository.migrate()
+        self.assertTrue(self.repository.schema_current())
 
     def test_migrations_record_checksums(self) -> None:
         with self.repository.transaction() as connection:

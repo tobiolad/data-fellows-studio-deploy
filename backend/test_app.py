@@ -418,7 +418,8 @@ class StudioLifecycleTests(unittest.TestCase):
                 "STUDIO_DATABASE_URL": "postgresql://placeholder",
             },
             clear=False,
-        ):
+        ), patch.object(app_module, "postgres_repository") as repository:
+            repository.return_value.schema_current.return_value = True
             response = self.client.get("/ready")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["persistence"], "postgres")

@@ -1,0 +1,22 @@
+# Staging release controls
+
+All jobs are manual. The owner first integrates the approved stack on protected main. Set branch protection and CODEOWNERS review for workflows, ops scripts, migrations and image definitions. Restrict bypass permissions. The initial job reads environment settings before scheduling a protected job. It requires an existing environment, at least one required reviewer, prevented self-review and a single deployment branch rule for main. Configure GitHub metadata read access for the initial job. Keep deployment branches and OIDC subjects restricted even when workflows change on other branches.
+
+| Environment | Identity and authorization | Result |
+|---|---|---|
+| azure-inventory | Federated Reader limited to the approved staging group | Inspects the known BizPilot network, registry and shared environment. |
+| studio-build | No Azure principal | Builds and smoke-checks two local images and exports a checksummed archive for three days. Owner separately authorizes import/signing and records registry manifest digests. |
+| studio-preview | Reader on the Studio app | Shows current and proposed API/web digest references. This is an app image preview. Additional infrastructure requires a separately reviewed resource template and cost preview. |
+| studio-migrate | Custom role allowing reads and job start/execution reads only on caj-studio-staging-migrate | Runs the preconfigured manual job once with the reviewed API digest, then waits for success. The job contains the private migrator connection. Confirm a restorable backup, tested recovery and compatibility before approval. |
+| studio-verify | Reader on ca-studio-staging, network path to approved staging ingress | Verifies 100% traffic on the ready revision, both digests, schema checksums, anonymous API 401 and readiness. Run cross-role login tests with the designated accounts separately. |
+| studio-rollback | Custom app-read, revision-read and traffic-write scope only on ca-studio-staging | Moves traffic between explicitly named active revisions after validating the current traffic and healthy target. Require multiple-revision mode, explicit traffic labels/weights and schema-compatibility review. Re-run verification, using target digests. |
+
+Set AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID and AZURE_CLIENT_ID per Azure environment. Set STUDIO_FQDN for verification. Configure a unique federated identity subject per environment in the form repo:Data-Fellows/data-fellows-studio:environment:<environment> with audience api://AzureADTokenExchange. The identity for migration jobs differs from the interactive API runtime. Give the runtime only required data privileges, SELECT on the schema ledger, and INSERT/authorized SELECT on audit events. Reserve table ownership, DDL and backups for separately authorized principals.
+
+## Reuse and retention decisions
+
+The existing plan names rg-bizpilot-staging, cae-bizpilot-staging and acrbizpilotstaging as reuse candidates. Studio image repositories are studio/api and studio/web. Validate Studio-only identities, private database, private token storage, storage/DNS boundaries and subnet egress. Never grant the Studio deployment identities subscription Contributor. Keep resource changes outside BizPilot and Inscend. No workflow creates a resource or deploys a new revision. Privileged jobs need the owner's approval on each run.
+
+Azure sponsorship offer type, remaining credits, expiry, quota and eligible services require billing-owner evidence. Obtain a dated inventory and cost estimate covering registry, compute, PostgreSQL, networking, token storage, backups and telemetry. Review whether approval-gated Actions build minutes and artifact storage are acceptable. If staging ingress is private, select a separately approved runner with network access before verification.
+
+New audit records keep decision provenance. The database trigger rejects row deletion, update and truncation, including no-op statements. A database owner can alter triggers. Validate separate roles, monitored privileged access, backup retention, legal holds and restore testing. Owner approval is required for a retention schedule or destructive purge. Avoid logging access tokens, storage pointers, message bodies or full live records.

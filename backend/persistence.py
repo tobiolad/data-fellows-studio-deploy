@@ -55,6 +55,13 @@ class PostgresRepository:
         finally:
             connection.close()
 
+    def schema_current(self) -> bool:
+        expected = {p.name.split("_", 1)[0]: hashlib.sha256(p.read_bytes()).hexdigest() for p in MIGRATIONS_DIR.glob("*.sql")}
+        if not expected:
+            return False
+        with self.transaction() as connection:
+            return dict(connection.execute("SELECT version, checksum FROM studio_schema_migrations")) == expected
+
     def migrate(self) -> None:
         """Apply migrations in lexical order inside one transaction."""
         scripts = sorted(MIGRATIONS_DIR.glob("*.sql"))
@@ -62,6 +69,7 @@ class PostgresRepository:
             raise PersistenceConfigurationError("No Studio migrations were found")
         with self.transaction() as connection:
             cursor = connection.cursor()
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext('data-fellows-studio-migrate'))")
             cursor.execute("CREATE TABLE IF NOT EXISTS studio_schema_migrations (version text PRIMARY KEY, checksum text, applied_at timestamptz NOT NULL DEFAULT now())")
             cursor.execute("ALTER TABLE studio_schema_migrations ADD COLUMN IF NOT EXISTS checksum text")
             for script in scripts:
