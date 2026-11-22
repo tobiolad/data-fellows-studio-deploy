@@ -30,6 +30,10 @@ def assert_review_workflow(case):
     client.post(f"/api/assignments/{invitation['id']}/accept", headers=professional_headers).raise_for_status()
     client.delete(f"/api/organizations/{org['id']}/members/{professional}/professional", headers=case.admin).raise_for_status()
     case.assertEqual(client.post("/api/deliverables", headers=professional_headers, json=submission).status_code, 403)
+    create(f"/api/organizations/{org['id']}/members", {"actor_id": professional, "role": "professional"})
+    for section in ("messages", "documents", "activity"):
+        case.assertEqual(client.get(f"/api/projects/{project['id']}/{section}", headers=professional_headers).status_code, 403)
+    case.assertEqual(client.get(f"/api/professionals/{professional}/assignments", headers=professional_headers).json(), [])
     first = create("/api/deliverables", submission)
     queue = "/api/reviewer/queue"
     case.assertEqual(client.get(queue, headers=headers).json()["items"], [])

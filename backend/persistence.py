@@ -18,7 +18,7 @@ from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 
-from backend.admission import check_approval
+from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
@@ -150,10 +150,12 @@ class PostgresRepository:
                 cursor.execute("SELECT id, organization_id, name, objective, status, created_at FROM engagements ORDER BY created_at")
             else:
                 cursor.execute(
-                    """SELECT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at
+                    """SELECT DISTINCT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at
                        FROM engagements e
                        JOIN memberships m ON m.organization_id = e.organization_id
-                       WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                       WHERE m.actor_id = %s AND m.revoked_at IS NULL AND
+                           (m.role IN ('client','owner','reviewer') OR EXISTS
+                           (SELECT 1 FROM studio_current_assignments a WHERE a.engagement_id=e.id AND a.professional_id=m.actor_id AND a.status='accepted'))
                        ORDER BY e.created_at""",
                     (actor_id,),
                 )
@@ -236,11 +238,12 @@ class PostgresRepository:
         )
         roles = {item[0] for item in cursor.fetchall()}
         cursor.execute(
-            """SELECT 1 FROM assignments a JOIN work_packages w ON w.id = a.work_package_id
-               WHERE w.project_id = %s AND a.professional_id = %s AND a.status = 'accepted'
+            """SELECT 1 FROM studio_current_assignments a
+               WHERE a.project_id = %s AND a.professional_id = %s AND a.status = 'accepted'
                  AND (a.expires_at IS NULL OR a.expires_at > now())""",
             (project_id, actor),
         )
+        roles.discard("professional")
         if cursor.fetchone() is not None:
             roles.add("professional")
         if not roles.intersection({"owner", "reviewer", "client", "professional"}):
@@ -256,7 +259,7 @@ class PostgresRepository:
                 (project_id,),
             )
             internal = admin or bool(roles.intersection({"owner", "reviewer"}))
-            allowed_groups = {"internal"}
+            allowed_groups = set()
             if "client" in roles:
                 allowed_groups.add("client")
             if "professional" in roles:
@@ -325,6 +328,11 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             organization_id, roles = self._project_context(cursor, project_id, actor, admin)
+            if not admin and not roles.intersection({"owner", "reviewer"}):
+                cursor.execute("""SELECT action, created_at FROM audit_events WHERE organization_id=%s
+                           AND resource_type='project' AND resource_id=%s AND action IN ('project.created','project.completed')
+                           ORDER BY created_at DESC""", (organization_id, str(project_id)))
+                return [{"action": action, "created_at": when} for action, when in cursor.fetchall()]
             cursor.execute("SELECT id FROM work_packages WHERE project_id = %s", (project_id,))
             package_ids = [str(row[0]) for row in cursor.fetchall()]
             resource_ids = [str(project_id), *package_ids]
@@ -359,6 +367,8 @@ class PostgresRepository:
                        JOIN engagements e ON e.id = p.engagement_id
                        JOIN memberships m ON m.organization_id = e.organization_id
                        WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                         AND (m.role <> 'professional' OR EXISTS (SELECT 1 FROM studio_current_assignments a
+                             WHERE a.project_id=n.project_id AND a.professional_id=m.actor_id AND a.status='accepted'))
                          AND (n.recipient_group = m.role OR (n.recipient_group = 'internal' AND m.role IN ('owner', 'reviewer')))
                        ORDER BY n.created_at DESC""",
                     (actor,),
@@ -367,7 +377,7 @@ class PostgresRepository:
 
     @staticmethod
     def _count_active_assignments(cursor: Any) -> int:
-        cursor.execute("SELECT COUNT(*) FROM assignments WHERE status = 'accepted' AND (expires_at IS NULL OR expires_at > now())")
+        cursor.execute("SELECT COUNT(*) FROM studio_current_assignments WHERE status = 'accepted' AND (expires_at IS NULL OR expires_at > now())")
         return int(cursor.fetchone()[0])
 
     def create_project(self, engagement_id: UUID, name: str, actor: str) -> UUID:
@@ -394,28 +404,19 @@ class PostgresRepository:
             if engagement is None:
                 raise LookupError("Engagement not found")
             organization_id = engagement[0]
-            if not admin:
-                cursor.execute(
-                    """SELECT 1 FROM memberships
-                       WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL
-                         AND role IN ('owner', 'reviewer', 'client')
-                       UNION SELECT 1 FROM assignments a
-                       JOIN work_packages w ON w.id = a.work_package_id
-                       JOIN projects p ON p.id = w.project_id
-                       WHERE p.engagement_id = %s AND a.professional_id = %s
-                         AND a.status = 'accepted'
-                         AND (a.expires_at IS NULL OR a.expires_at > now())""",
-                    (organization_id, actor, engagement_id, actor),
-                )
-                if cursor.fetchone() is None:
-                    raise PermissionError("Project access is not authorized")
-            cursor.execute(
-                "SELECT id, engagement_id, name, status, created_at FROM projects WHERE engagement_id = %s ORDER BY created_at",
-                (engagement_id,),
-            )
+            cursor.execute("""SELECT 1 FROM memberships WHERE organization_id=%s AND actor_id=%s
+                              AND revoked_at IS NULL AND role IN ('owner','reviewer','client')""", (organization_id, actor))
+            broad = admin or cursor.fetchone() is not None
+            cursor.execute("""SELECT id, engagement_id, name, status, created_at FROM projects p
+                WHERE engagement_id=%s AND (%s OR EXISTS (SELECT 1 FROM studio_current_assignments a
+                    WHERE a.project_id=p.id AND a.professional_id=%s AND a.status='accepted')) ORDER BY created_at""",
+                (engagement_id, broad, actor))
+            rows = cursor.fetchall()
+            if not broad and not rows:
+                raise PermissionError("Project access is not authorized")
             return [
                 {"id": str(row[0]), "engagement_id": str(row[1]), "name": row[2], "status": row[3], "created_at": row[4]}
-                for row in cursor.fetchall()
+                for row in rows
             ]
 
     def client_overview(self, actor: str) -> dict[str, Any]:
@@ -517,17 +518,12 @@ class PostgresRepository:
             if project is None:
                 raise LookupError("Project not found")
             organization_id = project[0]
-            if not admin:
-                cursor.execute(
-                    """SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL AND role IN ('owner', 'reviewer', 'client')
-                       UNION SELECT 1 FROM assignments a JOIN work_packages w ON w.id = a.work_package_id
-                       WHERE w.project_id = %s AND a.professional_id = %s AND a.status = 'accepted'
-                         AND (a.expires_at IS NULL OR a.expires_at > now())""",
-                    (organization_id, actor, project_id, actor),
-                )
-                if cursor.fetchone() is None:
-                    raise PermissionError("Work package access is not authorized")
-            cursor.execute("SELECT id, project_id, title, acceptance_criteria, status, created_at FROM work_packages WHERE project_id = %s ORDER BY created_at", (project_id,))
+            _, roles = self._project_context(cursor, project_id, actor, admin)
+            broad = bool(roles.intersection({"admin", "owner", "reviewer", "client"}))
+            cursor.execute("""SELECT id, project_id, title, acceptance_criteria, status, created_at FROM work_packages w
+                WHERE project_id=%s AND (%s OR EXISTS (SELECT 1 FROM studio_current_assignments a
+                WHERE a.work_package_id=w.id AND a.professional_id=%s AND a.status='accepted')) ORDER BY created_at""",
+                (project_id, broad, actor))
             result = []
             for row in cursor.fetchall():
                 cursor.execute("SELECT depends_on_id FROM work_package_dependencies WHERE work_package_id = %s ORDER BY depends_on_id", (row[0],))
@@ -540,12 +536,14 @@ class PostgresRepository:
             cursor.execute(
                 """INSERT INTO professional_admissions(professional_id, status, submitted_at)
                    VALUES (%s, 'submitted', now())
-                   ON CONFLICT (professional_id) DO UPDATE
-                   SET status = 'submitted', submitted_at = now(), reviewed_at = NULL,
-                       decided_by = NULL, decided_at = NULL, decision_reason = '',
-                       missing_information = '[]'::jsonb, assessment_requests = '[]'::jsonb, next_action = ''""",
+                   ON CONFLICT (professional_id) DO NOTHING RETURNING professional_id""",
                 (professional_id,),
             )
+            if cursor.fetchone() is None:
+                cursor.execute("SELECT status FROM professional_admissions WHERE professional_id = %s FOR SHARE", (professional_id,))
+                if cursor.fetchone()[0] != "submitted":
+                    raise ValueError("An application already exists. Update the current profile or contact admission staff.")
+                return
             self._audit(cursor, None, actor, "professional.application_submitted", "professional", professional_id)
 
     def get_professional_application(self, professional_id: str) -> dict[str, Any] | None:
@@ -562,6 +560,13 @@ class PostgresRepository:
                     "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7],
                     "missing_information": row[8], "assessment_requests": row[9],
                     "evidence_references": row[10], "next_action": row[11]}
+
+    def admission_history(self, professional_id: str) -> list[dict]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("""SELECT action, actor_id, created_at, metadata FROM audit_events WHERE resource_id=%s
+                AND resource_type IN ('professional','professional_admission') ORDER BY created_at DESC, id DESC""", (professional_id,))
+            return [{"action": action, "reviewer": actor, "created_at": when, **metadata} for action, actor, when, metadata in cursor.fetchall()]
 
     def get_professional_profile(self, professional_id: str) -> dict[str, Any] | None:
         with self.transaction() as connection:
@@ -589,7 +594,7 @@ class PostgresRepository:
     def upsert_professional_profile(self, professional_id: str, payload: dict[str, Any], actor: str, expected_version: int | None = None) -> dict[str, Any]:
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT status FROM professional_admissions WHERE professional_id = %s", (professional_id,))
+            cursor.execute("SELECT status FROM professional_admissions WHERE professional_id = %s FOR UPDATE", (professional_id,))
             admission = cursor.fetchone()
             if admission is None:
                 raise LookupError("Submit a professional application before editing a profile")
@@ -632,6 +637,8 @@ class PostgresRepository:
                 profile = dict(zip(("version", "skills", "evidence_references"), row)) if row else None
                 application = dict(zip(("status", "missing_information", "assessment_requests"), existing))
                 check_approval(application, profile, review, professional_id, actor)
+            if review["status"] != "approved":
+                cursor.execute("UPDATE assignments SET status='revoked' WHERE professional_id=%s AND status IN ('invited','accepted')", (professional_id,))
             terminal = review["status"] in {"approved", "declined", "revoked"}
             cursor.execute(
                 """UPDATE professional_admissions
@@ -650,7 +657,7 @@ class PostgresRepository:
             )
             row = cursor.fetchone()
             self._audit(cursor, None, actor, f"professional.admission_{review['status']}", "professional_admission", professional_id,
-                        {"reason": review.get("reason", ""), "reviewed_profile_version": review.get("reviewed_profile_version"), "missing_information_count": len(review.get("missing_information", []))})
+                        {"policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": existing[0], "reason": review.get("reason", ""), "reviewed_profile_version": review.get("reviewed_profile_version"), "missing_information_count": len(review.get("missing_information", []))})
             return {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
                     "submitted_at": row[5], "reviewed_at": row[6], "decision_reason": row[7], "missing_information": row[8],
                     "assessment_requests": row[9], "evidence_references": row[10], "next_action": row[11]}
@@ -694,11 +701,11 @@ class PostgresRepository:
                 raise LookupError("Work package not found")
             organization_id = row[0]
             self._require_owner(cursor, organization_id, actor)
-            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved' FOR SHARE", (professional_id,))
             if cursor.fetchone() is None:
                 raise ValueError("Professional approval is required before assignment")
             cursor.execute(
-                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'professional' AND revoked_at IS NULL",
+                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND role = 'professional' AND revoked_at IS NULL FOR SHARE",
                 (organization_id, professional_id),
             )
             if cursor.fetchone() is None:
@@ -721,7 +728,7 @@ class PostgresRepository:
                    JOIN work_packages w ON w.id = a.work_package_id
                    JOIN projects p ON p.id = w.project_id
                    JOIN engagements e ON e.id = p.engagement_id
-                   WHERE a.id = %s AND a.professional_id = %s""",
+                   WHERE a.id = %s AND a.professional_id = %s FOR UPDATE OF a""",
                 (assignment_id, professional_id),
             )
             row = cursor.fetchone()
@@ -733,6 +740,9 @@ class PostgresRepository:
             if expires_at and expires_at <= datetime.now(timezone.utc):
                 cursor.execute("UPDATE assignments SET status = 'expired' WHERE id = %s", (assignment_id,))
                 raise ValueError("Assignment invitation has expired")
+            cursor.execute("SELECT 1 FROM studio_current_assignments WHERE id=%s", (assignment_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("Assignment access is no longer active")
             cursor.execute("UPDATE assignments SET status = 'accepted' WHERE id = %s", (assignment_id,))
             self._audit(cursor, organization_id, professional_id, "assignment.accepted", "assignment", str(assignment_id))
 
@@ -745,7 +755,7 @@ class PostgresRepository:
                    JOIN work_packages w ON w.id = a.work_package_id
                    JOIN projects p ON p.id = w.project_id
                    JOIN engagements e ON e.id = p.engagement_id
-                   WHERE a.id = %s AND a.professional_id = %s""",
+                   WHERE a.id = %s AND a.professional_id = %s FOR UPDATE OF a""",
                 (assignment_id, professional_id),
             )
             row = cursor.fetchone()
@@ -769,9 +779,10 @@ class PostgresRepository:
                    JOIN work_packages w ON w.id = a.work_package_id
                    JOIN projects p ON p.id = w.project_id
                    JOIN engagements e ON e.id = p.engagement_id
-                   WHERE a.professional_id = %s
+                   WHERE a.professional_id = %s AND (%s OR EXISTS
+                     (SELECT 1 FROM studio_current_assignments v WHERE v.id=a.id))
                    ORDER BY a.created_at DESC""",
-                (professional_id,),
+                (professional_id, admin),
             )
             return [
                 {"id": str(row[0]), "work_package_id": str(row[1]), "professional_id": row[2], "status": row[3], "expires_at": row[4], "created_at": row[5], "title": row[6], "project_name": row[7], "engagement_name": row[8], "objective": row[9]}
@@ -793,7 +804,7 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             if not admin:
-                cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+                cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved' FOR SHARE", (professional_id,))
                 if cursor.fetchone() is None:
                     raise PermissionError("Professional approval is required to view opportunities")
             cursor.execute("SELECT id, title, summary, specialization, skills, compensation, deadline, status, created_at FROM opportunities WHERE status = 'published' ORDER BY created_at DESC")
@@ -809,7 +820,7 @@ class PostgresRepository:
         interest_id = uuid4()
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved'", (professional_id,))
+            cursor.execute("SELECT 1 FROM professional_admissions WHERE professional_id = %s AND status = 'approved' FOR SHARE", (professional_id,))
             if cursor.fetchone() is None:
                 raise PermissionError("Professional approval is required to express interest")
             cursor.execute("SELECT 1 FROM opportunities WHERE id = %s AND status = 'published'", (opportunity_id,))
@@ -1035,9 +1046,9 @@ class PostgresRepository:
                 membership = cursor.fetchone()
                 if membership:
                     role = membership[0]
-                if role is None:
+                if role in {None, "professional"}:
                     cursor.execute(
-                        "SELECT 1 FROM assignments WHERE work_package_id = %s AND professional_id = %s AND status = 'accepted' AND (expires_at IS NULL OR expires_at > now())",
+                        "SELECT 1 FROM studio_current_assignments WHERE work_package_id = %s AND professional_id = %s AND status = 'accepted'",
                         (package_id, actor),
                     )
                     if cursor.fetchone() is None:
@@ -1188,6 +1199,11 @@ class PostgresRepository:
             )
             if cursor.rowcount != 1:
                 raise LookupError("Membership role not found")
+            if role == "professional":
+                cursor.execute("""UPDATE assignments a SET status='revoked' FROM work_packages w
+                    JOIN projects p ON p.id=w.project_id JOIN engagements e ON e.id=p.engagement_id
+                    WHERE a.work_package_id=w.id AND e.organization_id=%s AND a.professional_id=%s
+                      AND a.status IN ('accepted','invited')""", (organization_id, actor_id))
             self._audit(cursor, organization_id, actor, "membership.revoked", "organization_membership", f"{actor_id}:{organization_id}")
 
     def list_audit(self, actor_id: str, admin: bool = False) -> list[dict[str, Any]]:
@@ -1199,8 +1215,8 @@ class PostgresRepository:
                 cursor.execute(
                     """SELECT e.organization_id, e.actor_id, e.action, e.resource_type, e.resource_id, e.metadata, e.created_at
                        FROM audit_events e
-                       JOIN memberships m ON m.organization_id = e.organization_id
-                       WHERE m.actor_id = %s AND m.revoked_at IS NULL
+                       WHERE EXISTS (SELECT 1 FROM memberships m WHERE m.organization_id = e.organization_id AND m.actor_id = %s
+                         AND m.revoked_at IS NULL AND m.role IN ('owner','reviewer'))
                        ORDER BY e.created_at""",
                     (actor_id,),
                 )

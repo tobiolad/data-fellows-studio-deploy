@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.admission import check_approval
+from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval
 from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
 from backend.persistence import PersistenceConfigurationError, PostgresRepository
 
@@ -208,6 +208,30 @@ def project_for_package(package_id: str) -> dict:
     return project
 
 
+def revoke_assignments(professional_id: str, organization_id: str | None = None) -> None:
+    for assignment in store.assignments.values():
+        if assignment["professional_id"] != professional_id or assignment["status"] not in {"invited", "accepted"}:
+            continue
+        project = project_for_package(assignment["work_package_id"])
+        if organization_id is None or organization_id == organization_for_engagement(project["engagement_id"]):
+            assignment["status"] = "revoked"
+
+
+def active_package_ids(actor: Identity) -> set[str]:
+    if actor.actor_id not in store.approved_professionals:
+        return set()
+    result = set()
+    for item in store.assignments.values():
+        if item["professional_id"] != actor.actor_id or item["status"] != "accepted":
+            continue
+        if item["expires_at"] and datetime.fromisoformat(item["expires_at"]).timestamp() <= datetime.now(timezone.utc).timestamp():
+            continue
+        org = organization_for_engagement(project_for_package(item["work_package_id"])["engagement_id"])
+        if "professional" in store.memberships.get((actor.actor_id, org), set()):
+            result.add(item["work_package_id"])
+    return result
+
+
 def memory_project_access(actor: Identity, project_id: str) -> tuple[dict, str, set[str]]:
     """Resolve project scope and caller membership without trusting client input."""
     project = store.projects.get(project_id)
@@ -215,12 +239,8 @@ def memory_project_access(actor: Identity, project_id: str) -> tuple[dict, str, 
         raise HTTPException(status_code=404, detail="Project not found")
     organization_id = organization_for_engagement(project["engagement_id"])
     roles = store.memberships.get((actor.actor_id, organization_id), set())
-    assigned = any(
-        item["professional_id"] == actor.actor_id
-        and item["status"] == "accepted"
-        and store.work_packages.get(item["work_package_id"], {}).get("project_id") == project_id
-        for item in store.assignments.values()
-    )
+    assigned = any(store.work_packages[key]["project_id"] == project_id for key in active_package_ids(actor))
+    roles = roles - {"professional"}
     if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
         raise HTTPException(status_code=403, detail="Project access is not authorized")
     return project, organization_id, roles | ({"professional"} if assigned else set())
@@ -470,6 +490,8 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
         raise HTTPException(status_code=404, detail="Membership role not found")
     if role == "owner" and sum("owner" in roles for (candidate, org), roles in store.memberships.items() if org == organization_id and candidate != member_id) == 0:
         raise HTTPException(status_code=409, detail="The final organization owner cannot be revoked")
+    if role == "professional":
+        revoke_assignments(member_id, organization_id)
     assigned.remove(role)
     if not assigned:
         store.memberships.pop((member_id, organization_id), None)
@@ -484,9 +506,16 @@ def submit_professional_application(professional_id: str, request: Request) -> d
     if actor.actor_id != professional_id and "admin" not in actor.roles:
         raise HTTPException(status_code=403, detail="A professional may submit only their own application")
     if postgres_mode():
-        postgres_repository().submit_professional_application(professional_id, actor.actor_id)
+        try:
+            postgres_repository().submit_professional_application(professional_id, actor.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"professional_id": professional_id, "status": "submitted"}
-    store.approved_professionals.discard(professional_id)
+    existing = store.professional_admissions.get(professional_id)
+    if existing:
+        if existing["status"] == "submitted":
+            return {"professional_id": professional_id, "status": "submitted"}
+        raise HTTPException(status_code=409, detail="An application already exists. Update the current profile or contact admission staff.")
     store.professional_admissions[professional_id] = {
         "professional_id": professional_id,
         "status": "submitted",
@@ -545,7 +574,7 @@ def get_professional_profile(professional_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Professional profile has not been started")
     if not postgres_mode():
         record = {**record, "application_status": store.professional_admissions[professional_id]["status"]}
-    return record
+    return {**record, "evidence_references": [{**ref, "status": "unverified"} for ref in record.get("evidence_references", [])]}
 
 
 @app.put("/api/professionals/{professional_id}/profile")
@@ -554,6 +583,7 @@ def update_professional_profile(professional_id: str, body: ProfessionalProfileU
     _profile_access(actor, professional_id)
     payload = body.model_dump(exclude_none=True)
     for evidence in payload.get("evidence_references", []):
+        evidence["status"] = "unverified"
         reference = evidence.get("reference", "").strip()
         if reference and not reference.startswith(("private://", "quarantine://", "pending://")):
             raise HTTPException(status_code=422, detail="Evidence references must use private, quarantine, or pending storage schemes")
@@ -585,6 +615,17 @@ def update_professional_profile(professional_id: str, body: ProfessionalProfileU
     return profile
 
 
+@app.get("/api/professionals/{professional_id}/admission-history")
+def admission_history(professional_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin", "reviewer")
+    if postgres_mode():
+        return postgres_repository().admission_history(professional_id)
+    return [{"action": item["action"], "reviewer": item["actor_id"], "created_at": item["created_at"], **item["metadata"]}
+            for item in reversed(store.audit) if item["resource_id"] == professional_id
+            and item["resource_type"] in {"professional", "professional_admission"}]
+
+
 @app.get("/api/professionals/admissions")
 def list_professional_admissions(
     request: Request,
@@ -604,6 +645,8 @@ def list_professional_admissions(
 def review_professional_admission(professional_id: str, body: AdmissionReviewUpdate, request: Request) -> dict:
     actor = identity(request)
     require_global(actor, "admin", "reviewer")
+    if professional_id == actor.actor_id:
+        raise HTTPException(status_code=409, detail="An independent reviewer must make the admission decision")
     for reference in body.assessment_requests:
         if not reference.get("title", "").strip():
             raise HTTPException(status_code=422, detail="Assessment requests require a title")
@@ -621,6 +664,7 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
     record = store.professional_admissions.get(professional_id)
     if not record:
         raise HTTPException(status_code=404, detail="Professional application not found")
+    previous_status = record["status"]
     if body.status == "approved":
         try:
             check_approval(record, store.professional_profiles.get(professional_id),
@@ -643,8 +687,9 @@ def review_professional_admission(professional_id: str, body: AdmissionReviewUpd
         store.approved_professionals.add(professional_id)
     else:
         store.approved_professionals.discard(professional_id)
+        revoke_assignments(professional_id)
     store.event(actor, f"professional.admission_{body.status}", "professional_admission", professional_id,
-                {"reason": body.reason, "reviewed_profile_version": body.reviewed_profile_version})
+                {"policy_version": QUALIFICATION_POLICY_VERSION, "previous_status": previous_status, "reason": body.reason, "reviewed_profile_version": body.reviewed_profile_version})
     return record
 
 
@@ -685,8 +730,9 @@ def list_engagements(request: Request) -> list[dict]:
     if "admin" in actor.roles:
         return list(store.engagements.values())
     visible = []
+    scoped = {project_for_package(key)["engagement_id"] for key in active_package_ids(actor)}
     for engagement in store.engagements.values():
-        if (actor.actor_id, engagement["organization_id"]) in store.memberships:
+        if engagement["id"] in scoped or store.memberships.get((actor.actor_id, engagement["organization_id"]), set()).intersection({"client", "reviewer", "owner"}):
             visible.append(engagement)
     return visible
 
@@ -814,7 +860,7 @@ def list_project_messages(project_id: str, request: Request) -> list[dict]:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     _project, _organization_id, roles = memory_project_access(actor, project_id)
     internal = "admin" in actor.roles or roles.intersection({"owner", "reviewer"})
-    allowed_groups = {"internal"}
+    allowed_groups = set()
     if "client" in roles:
         allowed_groups.add("client")
     if "professional" in roles:
@@ -915,6 +961,10 @@ def project_activity(project_id: str, request: Request) -> list[dict]:
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     _project, _organization_id, roles = memory_project_access(actor, project_id)
+    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer"}):
+        return [{"action": event["action"], "created_at": event["created_at"]} for event in reversed(store.audit)
+                if event["resource_type"] == "project" and event["resource_id"] == project_id
+                and event["action"] in {"project.created", "project.completed"}]
     related_ids = {project_id}
     package_ids = {item["id"] for item in store.work_packages.values() if item["project_id"] == project_id}
     related_ids.update(package_ids)
@@ -966,16 +1016,12 @@ def list_projects(engagement_id: str, request: Request) -> list[dict]:
     if "admin" not in actor.roles:
         organization_id = engagement["organization_id"]
         roles = store.memberships.get((actor.actor_id, organization_id), set())
-        assigned = any(
-            assignment["professional_id"] == actor.actor_id
-            and assignment["status"] == "accepted"
-            and store.work_packages.get(assignment["work_package_id"], {}).get("project_id") in {
-                project["id"] for project in store.projects.values() if project["engagement_id"] == engagement_id
-            }
-            for assignment in store.assignments.values()
-        )
-        if not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
-            raise HTTPException(status_code=403, detail="Project access is not authorized")
+        if not roles.intersection({"owner", "reviewer", "client"}):
+            project_ids = {store.work_packages[key]["project_id"] for key in active_package_ids(actor)}
+            visible = [p for p in store.projects.values() if p["engagement_id"] == engagement_id and p["id"] in project_ids]
+            if not visible:
+                raise HTTPException(status_code=403, detail="Project access is not authorized")
+            return visible
     return [project for project in store.projects.values() if project["engagement_id"] == engagement_id]
 
 
@@ -1060,9 +1106,11 @@ def list_work_packages(project_id: str, request: Request) -> list[dict]:
         raise HTTPException(status_code=404, detail="Project not found")
     organization_id = organization_for_engagement(project["engagement_id"])
     roles = store.memberships.get((actor.actor_id, organization_id), set())
-    assigned = any(item["professional_id"] == actor.actor_id and item["status"] == "accepted" and store.work_packages.get(item["work_package_id"], {}).get("project_id") == project_id for item in store.assignments.values())
-    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}) and not assigned:
-        raise HTTPException(status_code=403, detail="Work package access is not authorized")
+    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}):
+        visible = [store.work_packages[k] for k in active_package_ids(actor) if store.work_packages[k]["project_id"] == project_id]
+        if not visible:
+            raise HTTPException(status_code=403, detail="Work package access is not authorized")
+        return visible
     return [item for item in store.work_packages.values() if item["project_id"] == project_id]
 
 
@@ -1115,8 +1163,11 @@ def accept_assignment(assignment_id: str, request: Request) -> dict:
     if assignment["expires_at"] and datetime.fromisoformat(assignment["expires_at"]) <= datetime.now(timezone.utc):
         assignment["status"] = "expired"
         raise HTTPException(status_code=409, detail="Assignment invitation has expired")
-    assignment["status"] = "accepted"
     project = project_for_package(assignment["work_package_id"])
+    org = organization_for_engagement(project["engagement_id"])
+    if actor.actor_id not in store.approved_professionals or "professional" not in store.memberships.get((actor.actor_id, org), set()):
+        raise HTTPException(status_code=409, detail="Assignment access is no longer active")
+    assignment["status"] = "accepted"
     audit_response(actor, "assignment", assignment_id, "assignment.accepted", organization_for_engagement(project["engagement_id"]))
     return assignment
 
@@ -1162,6 +1213,12 @@ def list_assignments(professional_id: str, request: Request) -> list[dict]:
         if item["professional_id"] != professional_id:
             continue
         package = store.work_packages.get(item["work_package_id"], {})
+        if "admin" not in actor.roles:
+            org = organization_for_engagement(store.projects[package["project_id"]]["engagement_id"])
+            if (professional_id not in store.approved_professionals or item["status"] not in {"accepted", "invited"}
+                    or "professional" not in store.memberships.get((professional_id, org), set())
+                    or (item["expires_at"] and datetime.fromisoformat(item["expires_at"]).timestamp() <= datetime.now(timezone.utc).timestamp())):
+                continue
         project = store.projects.get(package.get("project_id"), {})
         engagement = store.engagements.get(project.get("engagement_id"), {})
         result.append({**item, "title": package.get("title"), "project_name": project.get("name"), "engagement_name": engagement.get("name"), "objective": engagement.get("objective")})
@@ -1432,8 +1489,7 @@ def list_deliverables(package_id: str, request: Request) -> list[dict]:
     project = project_for_package(package_id)
     organization_id = organization_for_engagement(project["engagement_id"])
     roles = store.memberships.get((actor.actor_id, organization_id), set())
-    assigned = any(item["work_package_id"] == package_id and item["professional_id"] == actor.actor_id and item["status"] == "accepted" for item in store.assignments.values())
-    if "admin" not in actor.roles and not roles and not assigned:
+    if "admin" not in actor.roles and not roles.intersection({"owner", "reviewer", "client"}) and package_id not in active_package_ids(actor):
         raise HTTPException(status_code=403, detail="Deliverable access is not authorized")
     deliverables = [item for item in store.deliverables.values() if item["work_package_id"] == package_id]
     if "client" in roles and "owner" not in roles and "reviewer" not in roles:
@@ -1606,6 +1662,6 @@ def audit(request: Request) -> list[dict]:
     visible_organizations = {
         organization_id
         for (member_id, organization_id), roles in store.memberships.items()
-        if member_id == actor.actor_id and roles
+        if member_id == actor.actor_id and roles.intersection({"owner", "reviewer"})
     }
     return [event for event in store.audit if event["organization_id"] in visible_organizations]

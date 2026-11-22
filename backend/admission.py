@@ -1,6 +1,9 @@
 """Minimum admission requirements shared by both storage adapters."""
 
 
+QUALIFICATION_POLICY_VERSION = "studio-admission-v1"
+
+
 def check_approval(application, profile, review, professional_id, reviewer):
     if reviewer == professional_id:
         raise ValueError("An independent reviewer must make the admission decision")

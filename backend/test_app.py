@@ -39,6 +39,20 @@ class StudioLifecycleTests(unittest.TestCase):
     def test_scoped_review_queue_and_single_decision(self):
         assert_review_workflow(self)
 
+    def test_resubmission_and_decision_provenance(self):
+        path = "/api/professionals/release-candidate"
+        owner = auth("release-candidate", "professional")
+        admit_professional(self.client, "release-candidate", self.admin)
+        before = self.client.get(path + "/application", headers=owner).json()
+        self.assertEqual(self.client.post(path + "/application", headers=owner).status_code, 409)
+        self.assertEqual(self.client.get(path + "/application", headers=owner).json(), before)
+        self.assertEqual(self.client.get(path + "/admission-history", headers=owner).status_code, 403)
+        history = self.client.get(path + "/admission-history", headers=self.admin).json()
+        self.assertEqual(history[0]["previous_status"], "under_review")
+        self.assertEqual(history[0]["policy_version"], "studio-admission-v1")
+        self.assertEqual(history[0]["reviewed_profile_version"], 1)
+        self.assertEqual(history[0]["reviewer"], before["decided_by"])
+
     def test_admission_policy_denials(self):
         assert_admission_gates(self, "synthetic-policy-applicant")
 
@@ -70,7 +84,7 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/engagements/{engagement['id']}/projects", headers=self.professional).status_code, 200)
         packages = self.client.get(f"/api/projects/{project['id']}/work-packages", headers=self.professional)
         self.assertEqual(packages.status_code, 200)
-        self.assertEqual(packages.json()[1]["depends_on"], [package["id"]])
+        self.assertEqual([p["id"] for p in packages.json()], [package["id"]])
 
         run = self.post("/api/ai-runs", {"work_package_id": package["id"], "specification": "Create a bounded implementation work breakdown for the approved inventory problem."}, self.admin)
         self.assertEqual(run["agent"], "synthetic-planner-v1")
@@ -168,7 +182,8 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertTrue(self.client.get("/api/notifications", headers=self.client_user).json())
         activity = self.client.get(f"/api/projects/{project['id']}/activity", headers=self.client_user)
         self.assertEqual(activity.status_code, 200)
-        self.assertTrue(any(event["action"] == "project.message.sent" for event in activity.json()))
+        self.assertEqual([event["action"] for event in activity.json()], ["project.created"])
+        self.assertEqual(set(activity.json()[0]), {"action", "created_at"})
 
         other = self.post("/api/organizations", {"name": "Other operations workspace"}, self.admin)
         self.post(f"/api/organizations/{other['id']}/members", {"actor_id": "client-2", "role": "client"}, self.admin)

@@ -36,6 +36,7 @@ def assert_admission_gates(case, candidate):
         {"label": "Sample", "reference": "quarantine://synthetic/sample", "status": "verified"}]}
     saved = client.put(path + "/profile", headers=owner, json=profile)
     saved.raise_for_status()
+    case.assertEqual(saved.json()["evidence_references"][0]["status"], "unverified")
     review["reviewed_profile_version"] = saved.json()["version"]
     case.assertEqual(check(), 409)
     profile["evidence_references"][0]["reference"] = "private://synthetic/sample"

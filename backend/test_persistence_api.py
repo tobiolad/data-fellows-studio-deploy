@@ -34,6 +34,20 @@ class PostgresApiIntegrationTests(unittest.TestCase):
     def test_scoped_review_queue_and_single_decision(self):
         assert_review_workflow(self)
 
+    def test_resubmission_and_decision_provenance(self):
+        path = "/api/professionals/release-candidate"
+        owner = auth("release-candidate", "professional")
+        admit_professional(self.client, "release-candidate", self.admin)
+        before = self.client.get(path + "/application", headers=owner).json()
+        self.assertEqual(self.client.post(path + "/application", headers=owner).status_code, 409)
+        self.assertEqual(self.client.get(path + "/application", headers=owner).json(), before)
+        self.assertEqual(self.client.get(path + "/admission-history", headers=owner).status_code, 403)
+        history = self.client.get(path + "/admission-history", headers=self.admin).json()
+        self.assertEqual(history[0]["previous_status"], "under_review")
+        self.assertEqual(history[0]["policy_version"], "studio-admission-v1")
+        self.assertEqual(history[0]["reviewed_profile_version"], 1)
+        self.assertEqual(history[0]["reviewer"], before["decided_by"])
+
     def test_admission_policy_denials(self):
         assert_admission_gates(self, "synthetic-policy-applicant")
 

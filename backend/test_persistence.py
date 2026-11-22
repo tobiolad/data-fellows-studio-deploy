@@ -11,7 +11,7 @@ from backend.persistence import MIGRATIONS_DIR, PersistenceConfigurationError, P
 class PersistenceConfigurationTests(unittest.TestCase):
     def test_versioned_migrations_exist_and_are_ordered(self) -> None:
         migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
-        self.assertEqual([path.name for path in migrations], ["001_initial.sql", "002_ai_execution_controls.sql", "003_work_package_dependencies.sql", "004_professional_opportunities.sql", "005_client_revision_requests.sql", "006_project_operations.sql", "007_professional_profiles.sql", "008_professional_admission_review.sql"])
+        self.assertEqual([path.name for path in migrations], ["001_initial.sql", "002_ai_execution_controls.sql", "003_work_package_dependencies.sql", "004_professional_opportunities.sql", "005_client_revision_requests.sql", "006_project_operations.sql", "007_professional_profiles.sql", "008_professional_admission_review.sql", "009_release_access.sql"])
         self.assertIn("CREATE TABLE IF NOT EXISTS organizations", migrations[0].read_text(encoding="utf-8"))
         self.assertIn("CREATE TABLE IF NOT EXISTS audit_events", migrations[0].read_text(encoding="utf-8"))
         self.assertIn("CREATE TABLE IF NOT EXISTS work_package_dependencies", migrations[2].read_text(encoding="utf-8"))
@@ -34,6 +34,13 @@ class PostgresIntegrationTests(unittest.TestCase):
         self.repository.revoke_membership(organization_id, "reviewer-1", "reviewer", "owner-1")
         audit = self.repository.list_audit("owner-1")
         self.assertTrue(any(event["action"] == "membership.revoked" for event in audit))
+
+    def test_audit_is_append_only(self):
+        from psycopg.errors import RaiseException
+        for statement in ("UPDATE audit_events SET metadata=metadata WHERE false", "DELETE FROM audit_events WHERE false", "TRUNCATE audit_events"):
+            with self.assertRaisesRegex(RaiseException, "append-only"):
+                with self.repository.transaction() as connection:
+                    connection.execute(statement)
 
     def test_migrations_are_idempotent(self) -> None:
         self.repository.migrate()
