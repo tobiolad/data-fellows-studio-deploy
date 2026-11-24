@@ -108,14 +108,24 @@ class Store:
 store = Store()
 _deliverable_lock = Lock()
 app = FastAPI(title="Data Fellows Studio", docs_url=None, redoc_url=None)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _allowed_frontend_origins() -> list[str]:
+    """The fixed local dev origins, plus whatever deployed frontend origins an
+    operator lists in STUDIO_EXTRA_ALLOWED_ORIGINS (comma-separated, e.g.
+    "https://studio.datafellowsai.com,https://data-fellows-studio-git-main-tobis-projects-2a038191.vercel.app")."""
+    origins = [
         "http://localhost:5173",
         "http://localhost:8100",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8100",
-    ],
+    ]
+    extra = os.getenv("STUDIO_EXTRA_ALLOWED_ORIGINS", "")
+    origins.extend(origin.strip() for origin in extra.split(",") if origin.strip())
+    return origins
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_frontend_origins(),
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )

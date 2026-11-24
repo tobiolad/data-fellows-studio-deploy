@@ -445,6 +445,19 @@ class StudioLifecycleTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173")
 
+    def test_extra_allowed_origins_are_additive_to_the_fixed_local_defaults(self) -> None:
+        with patch.dict(os.environ, {"STUDIO_EXTRA_ALLOWED_ORIGINS": "https://studio.datafellowsai.com, https://preview.vercel.app"}):
+            origins = app_module._allowed_frontend_origins()
+        self.assertIn("http://localhost:5173", origins)
+        self.assertIn("https://studio.datafellowsai.com", origins)
+        self.assertIn("https://preview.vercel.app", origins)
+
+    def test_extra_allowed_origins_defaults_to_just_the_fixed_local_origins(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("STUDIO_EXTRA_ALLOWED_ORIGINS", None)
+            origins = app_module._allowed_frontend_origins()
+        self.assertEqual(origins, ["http://localhost:5173", "http://localhost:8100", "http://127.0.0.1:5173", "http://127.0.0.1:8100"])
+
     def test_platform_session_writes_require_the_exact_origin(self):
         from unittest.mock import Mock
         validator = Mock()
