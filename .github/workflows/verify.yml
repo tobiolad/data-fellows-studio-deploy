@@ -1,0 +1,68 @@
+name: Verify Studio foundation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d studio_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      STUDIO_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/studio_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m unittest discover -s backend -p 'test_*.py' -v
+
+  containers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exercise staging guards with offline CLI fixtures
+        run: tests/staging/release-controls.sh
+      - name: Validate backend Dockerfile
+        run: docker build --check --file backend/Dockerfile .
+      - name: Validate frontend Dockerfile
+        run: docker build --check --file frontend/Dockerfile .
+
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Scan repository for secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo:ro"
+          ghcr.io/gitleaks/gitleaks:v8.30.0
+          detect --source=/repo --no-banner --redact --log-level error

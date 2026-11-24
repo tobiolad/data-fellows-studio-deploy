@@ -1,0 +1,128 @@
+{
+  "date": "2026-11-22",
+  "baseline": "df96b70",
+  "postgres": {
+    "major_version": 16,
+    "migrations": [
+      "001",
+      "002",
+      "003",
+      "004",
+      "005",
+      "006",
+      "007",
+      "008",
+      "009",
+      "010"
+    ],
+    "backend_tests": {
+      "backend.test_app.StudioLifecycleTests": 25,
+      "backend.test_auth.EntraTokenTests": 5,
+      "backend.test_persistence.PersistenceConfigurationTests": 2,
+      "backend.test_persistence.PostgresIntegrationTests": 6,
+      "backend.test_persistence_api.PostgresApiIntegrationTests": 5
+    },
+    "passed": 43,
+    "failed": 0,
+    "skipped": 0,
+    "additional_parameterized_subtests": 8
+  },
+  "browser_postgres": {
+    "synthetic-lifecycle": {
+      "status": "passed",
+      "unauthorizedClientReview": 403,
+      "project": "completed",
+      "pageErrors": [],
+      "failedRequests": []
+    },
+    "profile-admission-review": {
+      "status": "passed",
+      "actor": "profile-admission-1795378837450",
+      "profile": "saved_and_reloaded",
+      "review": "approved",
+      "unauthorized_profile_status": 403,
+      "errors": [],
+      "failures": []
+    },
+    "client-portal": {
+      "status": "passed",
+      "clientProject": "1e59a814-8a77-4eb8-83c0-21c3501ab053",
+      "clientAcceptance": "accepted",
+      "project": "completed",
+      "pageErrors": [],
+      "failedRequests": []
+    },
+    "admin-mission-control": {
+      "status": "passed",
+      "unauthorizedAdminOverview": 403,
+      "pageErrors": [],
+      "failedRequests": []
+    },
+    "engagement-workspace": "Passed harness isolation, engagement creation, search and details",
+    "ui-contract": "Studio UI contract passed",
+    "workspace-navigation": {
+      "layouts": 185,
+      "pageErrorsAndFailedRequests": [],
+      "httpErrors": {},
+      "consoleErrors": [],
+      "baseline": false
+    },
+    "project-collaboration": {
+      "workflow": "passed",
+      "pageErrors": [],
+      "axeViews": 3,
+      "axeViolations": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "browser_memory": {
+    "synthetic-lifecycle": {
+      "status": "passed",
+      "unauthorizedClientReview": 403,
+      "project": "completed",
+      "pageErrors": [],
+      "failedRequests": []
+    },
+    "project-collaboration": {
+      "workflow": "passed",
+      "pageErrors": [],
+      "axeViews": 0,
+      "axeViolations": []
+    }
+  },
+  "fixture_only_browser_session": {
+    "stagingSession": "passed",
+    "mockedApiRequests": 4
+  },
+  "container_smoke": "uid 10001\n/ 200\n/app.js 200\n/project-channel.js 200\n/health.html 200\n/ready 200\n/api/me 401",
+  "local_image_ids": [
+    "sha256:4f7a28dbc323a7f86c68a3177d2d73ba87fbfafc1154ba36851550460ba2d4f9",
+    "sha256:b1f3ca6eff5b38a42023b399ecd8edf6a364c85c50d376e74f80e9d66a4cb230"
+  ],
+  "workflow_checks": [
+    "actionlint 1.7.7 passed",
+    "bash syntax passed",
+    "five offline release operation and protection fixtures passed"
+  ],
+  "azure_live_operations": 0,
+  "github_main_protected": false,
+  "studio_github_environments": 0,
+  "sponsorship_verified": false,
+  "secrets": {
+    "scanner": "gitleaks 8.30.0",
+    "release_findings": 0,
+    "tree_findings": 0,
+    "historical_findings": [
+      {
+        "commit": "91c29b742adcd3f64de44589f62abc2f41fd87a6",
+        "file": "tests/playwright/synthetic-lifecycle.js",
+        "line": 69,
+        "rule": "generic-api-key",
+        "review": "synthetic fixture call with actor identifier"
+      }
+    ]
+  }
+}

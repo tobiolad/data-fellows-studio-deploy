@@ -1,0 +1,9 @@
+# Professional admission policy
+
+The existing application route permits a retry while an application is submitted. It returns 409 during review and after a decision. Staff can reopen a case through an audited review. Profile revisions use the existing versioned edit path. Only the profile owner can edit professional qualifications.
+
+Policy studio-admission-v2 applies to new approval decisions. An independent admin or admission reviewer must start review, resolve information and assessment requests, examine the current profile version, confirm at least one recorded skill, select at least one individually verified private evidence reference and record a rationale. Pending and quarantined references are ineligible. The backend validates every selection and records the label and hash of the selected label/reference pair, policy, exact profile version and reviewer. A reviewer verifies evidence through the approved private process before selecting it. Studio does not perform document scanning or certification.
+
+A profile edit resets the displayed verification for the new version. Historical decisions retain their own attestation. Prior approvals remain historical decisions. Missing historical versions and verification records stay unknown. The audit UI displays prior decisions and rationale. Revoking membership or admission ends affected invitations and assignments. Restoring membership or approving a new application requires new invitations. Before staging import, identify any historically reactivated assignments using the membership and admission audit trail and have a delivery owner resolve ambiguous grants.
+
+Changing eligibility criteria requires a new version in backend/admission.py, tests for both adapters, and owner review of any policy for previously admitted professionals. Retention approval and secure private-file validation are separate release gates.

@@ -1,0 +1,39 @@
+# Studio staging release candidate
+
+**Ready for integrated code review. Live staging remains blocked.** On 22 November 2026 the local candidate completed admission, assignment revocation, scoped communications, client decisions and accepted-version handover on PostgreSQL. Studio has no configured GitHub environments, main reports unprotected, and live sponsorship, identity and resource isolation remain unverified.
+
+## Delivered
+
+| Capability | Status | Evidence and limits |
+|---|---|---|
+| Release integration | Implemented and tested locally | Inspected all 48 intake PRs. Four side heads conflict with #48. Reviewed migration blobs across the first 53 heads. Owner must approve merge order and rerun checks after every retarget. |
+| Resubmission and admission history | Implemented and tested | Applicant retries preserve the submission and cannot reset a reviewed decision. New staff decisions record reviewer, rationale and policy. History is staff-only. Legacy approval returns 410. |
+| Qualification and evidence policy | Implemented and tested | V2 requires independent human verification of specific private references on the reviewed profile version. Applicant-provided verification is ignored. Editing creates a new unverified version. Older records retain their original provenance. |
+| Effective access and QA | Implemented and tested | Membership or admission revocation cuts off existing invitations, work and project communications. Regrant needs new invitations. Internal QA requires independent authorized staff. Clients receive scoped lifecycle activity. |
+| Project collaboration | Implemented and tested | Separate staff, client and accepted professional identities exercised project messages, audience isolation, document metadata, notifications, requests, staff decisions and client visibility. Professional messages reach the authorized Data Fellows team. Individual supervisor assignment/routing remains incomplete. |
+| Handover | Implemented and tested | Project completion records the accepted deliverable titles, version numbers and identifiers in the same PostgreSQL transaction. Older completions without a manifest remain unrecorded. |
+| Audit and retention | Implemented but not fully validated | PostgreSQL rejects updates, deletions and truncation of the audit table. Policy ratification, privileged DBA controls, legal holds, archival retention, restore tests and approved disposal remain open. |
+| Build, migration, preview, verification and rollback | Implemented but not fully validated | Local images, real schema checks and offline workflow fixtures passed. Image preview covers two existing containers. Azure RBAC, registry import/signing, private reachability and revision rollback require a staging rehearsal. |
+| Entra integration | Implemented but not fully validated | Local signature, delegated scope, authorized-client, single-role and same-origin checks passed. A Chromium fixture exercised anonymous and signed-in UI behavior. Actual tenant login, refresh, logout, disabled accounts and token forwarding remain unverified. |
+| Binary documents, billing and agreements | Incomplete | Documents are private metadata references. Storage, quarantine, malware scanning and retention need owner validation. This increment introduces no invoices, payments or contract records. |
+
+## Verification
+
+- **Backend:** 43 passed, 0 failed, 0 skipped on fresh PostgreSQL 16 with migrations 001–010. Six repository tests and five HTTP integration tests used PostgreSQL directly. The remainder were 25 in-memory/application tests, five Entra token tests and two persistence configuration tests. Eight parameterized token-denial subtests passed within those counts.
+- **Browser:** PostgreSQL-backed Chromium walkthroughs covered managed delivery and synthetic AI, profile admission, client revision/acceptance, admin operations, engagement creation, UI contracts and the three-role collaboration flow. The responsive gate checked 185 role/viewport combinations. The gate reported zero page, request, HTTP and console errors. The live-login UI contract used four mocked API requests.
+- **Accessibility:** Axe-core 4.10.3 ran WCAG A/AA rules on client coordination at 390px, the professional channel at 1024px and staff coordination at 1440px. Two initial sidebar contrast findings were fixed. All three reruns reported zero violations. These samples do not establish whole-product accessibility conformance.
+- **Containers:** Both Dockerfiles passed build checks. Both images built locally. The backend image packages migrations and imports as UID 10001. The nginx configuration passed syntax checking. The pair served static assets and checksum-aware readiness, and returned 401 for anonymous API access. Local builds used a BuildKit-mounted CA bundle for this environment's package proxy.
+- **Workflows:** actionlint 1.7.7 and shell syntax checks passed. Offline CLI fixtures cover environment protection, digest preview, migration job identity/configuration checks, readiness/anonymous access and single-source healthy-target rollback. No live workflow was dispatched.
+- **Secrets:** Gitleaks 8.30.0 found zero leaks in the release changes and current working tree. The historical scan of the candidate branch included one unsuppressed generic-api-key match at commit 91c29b7, tests/playwright/synthetic-lifecycle.js line 69. Inspection found a synthetic fixture invocation with an actor identifier. No credential appeared on that line. The report preserves the finding and commit history.
+
+[Exact results](staging-evidence/results.json) · [Accessibility results](staging-evidence/collaboration-checks.json) · [Client screenshot](staging-evidence/client-coordination-390.png) · [Staff screenshot](staging-evidence/staff-coordination-1440.png) · [Professional screenshot](staging-evidence/professional-channel-1024.png)
+
+## Owner actions and approvals
+
+1. **Repository owner:** Protect main, require review and CI, configure all six named protected environments, prevent self-review and allow only the main deployment branch. Resolve #3–#5 and #19 individually. Approve the documented stack sequence and each merge.
+2. **Azure billing owner:** Verify sponsorship offer, subscription, credits, expiry, eligible services, budgets and quota. The BizPilot inventory job succeeded on 20 November 2026. Its result confirms that its identity read metadata then. It provides no current Studio sponsorship or isolation attestation. The present session had no authenticated Azure CLI. Studio read-only inventory awaits an owner-approved environment and identity. [BizPilot inventory run](https://github.com/Data-Fellows/bizpilot-pro-concept/actions/runs/44694582082)
+3. **Infrastructure/security owners:** Validate the isolated Studio app, job, database, registry repositories, runtime/migration identities, secret store, private DNS, backups, audit rights, log retention, alerts and restore procedure. Approve any runner, compute, registry, monitoring or storage cost before use. Sign off on registry digests and migration compatibility before any execution or traffic change.
+4. **Identity owner:** Configure the separate Web/API registrations, grant delegated consent, assign separated test accounts and enable the approved private token store. Exercise actual tenant sign-in, two-organization isolation, revocation and logout.
+5. **Delivery/data owners:** Ratify qualification criteria, historical-grant review, evidence custody and retention. Confirm the policy for projects with multiple work packages. The existing completion rule accepts a project with at least one client-accepted deliverable. Its handover manifest includes only accepted versions.
+
+[Merge audit](PR_INTEGRATION_AUDIT.md) · [Protected release controls](../staging-release-controls.md) · [Identity setup](../staging-identity.md) · [Admission policy](../admission-policy.md)

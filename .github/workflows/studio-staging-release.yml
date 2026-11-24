@@ -1,0 +1,100 @@
+name: Studio protected staging operations
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Approved operation
+        type: choice
+        required: true
+        options: [build, preview, migrate, verify, rollback]
+      api_digest:
+        description: Approved Studio API manifest digest for preview, migration or verification
+        type: string
+      web_digest:
+        description: Approved Studio web manifest digest for preview or verification
+        type: string
+      from_revision:
+        description: Current 100 percent traffic revision for rollback
+        type: string
+      to_revision:
+        description: Approved healthy, schema-compatible rollback revision
+        type: string
+
+permissions:
+  contents: read
+concurrency:
+  group: studio-staging-release
+  cancel-in-progress: false
+
+jobs:
+  protection:
+    permissions:
+      contents: read
+      actions: read
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require existing owner-reviewed environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: studio-${{ inputs.operation }}
+        run: ops/check-release-environment.sh "$TARGET"
+
+  build:
+    needs: protection
+    if: inputs.operation == 'build'
+    runs-on: ubuntu-latest
+    environment: studio-build
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build both containers from the approved commit
+        run: |
+          set -eu
+          docker build -f backend/Dockerfile -t "studio/api:$GITHUB_SHA" .
+          docker build -f frontend/Dockerfile -t "studio/web:$GITHUB_SHA" .
+          docker run --rm --entrypoint python "studio/api:$GITHUB_SHA" -c 'import backend.app, backend.migrate; from backend.persistence import MIGRATIONS_DIR; assert list(MIGRATIONS_DIR.glob("*.sql"))'
+          docker run --rm "studio/web:$GITHUB_SHA" nginx -t
+          docker save "studio/api:$GITHUB_SHA" "studio/web:$GITHUB_SHA" | gzip > studio-images.tar.gz
+          sha256sum studio-images.tar.gz > studio-images.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: studio-images-${{ github.sha }}
+          path: |
+            studio-images.tar.gz
+            studio-images.sha256
+          retention-days: 3
+
+  azure:
+    needs: protection
+    if: inputs.operation != 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: studio-${{ inputs.operation }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Run the approved Studio operation
+        env:
+          OPERATION: ${{ inputs.operation }}
+          EXPECTED_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          EXPECTED_STUDIO_HOST: ${{ vars.STUDIO_FQDN }}
+          API_DIGEST: ${{ inputs.api_digest }}
+          WEB_DIGEST: ${{ inputs.web_digest }}
+          FROM_REVISION: ${{ inputs.from_revision }}
+          TO_REVISION: ${{ inputs.to_revision }}
+        run: ops/staging-release.sh "$OPERATION"
