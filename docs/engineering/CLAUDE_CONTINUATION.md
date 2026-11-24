@@ -211,18 +211,25 @@ tenant, or anything involving Azure.
 
 ## Pending work (next recommended tasks, in dependency order)
 
-0. **Frontend rebuild continuation.** `frontend-next/` has sign-in, Admin
-   overview, Admin referrals, Client overview, Professional overview, the
-   profile wizard, and the Reviewer queue. Everything else the sidebar links
-   to (engagements/projects/applications/AI-ops detail screens, client
-   deliverables/messages/billing/support, professional opportunities/
-   assignments/deliverables detail, reviewer admissions) is a `ComingSoonPage`
-   placeholder — real, not hidden, but not built. The old `frontend/` still
-   works and is what's actually deployed by `ops/`/`Dockerfile`; cutting over
-   (updating the container build, retiring `frontend/`) is an owner decision
-   once `frontend-next/` reaches parity, not something to do silently.
-   Real Entra sign-in still needs to replace `frontend-next/src/pages/SignIn.tsx`'s
-   synthetic picker, same gap the old frontend had.
+0. **Frontend rebuild continuation.** `frontend-next/` now has, all wired to
+   real backend data: sign-in, Admin overview/referrals/applications+review-
+   detail/engagements+membership/projects+work-packages+assignment, Client
+   overview/deliverables/messages, Professional overview/profile-wizard/
+   opportunities/assignments/deliverables. Still `ComingSoonPage` placeholder
+   (real, not hidden, just not built): Admin Professional network, AI
+   operations, Settings; Client Billing, Support; Professional "My
+   application" as its own page (status is already shown inline on the
+   Professional overview, just not a dedicated detail view); Reviewer
+   Admission review. That last one is blocked, not just undone: `GET
+   /api/professionals/admissions` is `admin`-only server-side (`backend/app.py`),
+   so there is no backend endpoint a reviewer can call to list admissions —
+   building that screen needs a backend change first, not just a frontend one.
+   The old `frontend/` still works and is what's actually deployed by
+   `ops/`/`Dockerfile`; cutting over (updating the container build, retiring
+   `frontend/`) is an owner decision once `frontend-next/` reaches parity, not
+   something to do silently. Real Entra sign-in still needs to replace
+   `frontend-next/src/pages/SignIn.tsx`'s synthetic picker, same gap the old
+   frontend had.
 1. **Branch integration plan for the owner.** The 54-deep PR stack needs an
    owner-approved merge sequence; this session did not merge anything. This
    increment's commits live only on `claude/studio-ai-execution-handoff-8y0l2a`
