@@ -1,9 +1,7 @@
 FROM python:3.12-slim
 WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
-RUN --mount=type=secret,id=package_ca \
-    if [ -f /run/secrets/package_ca ]; then export PIP_CERT=/run/secrets/package_ca; fi; \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 COPY migrations ./migrations
 RUN chmod -R a+rX /app/backend /app/migrations
