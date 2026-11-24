@@ -268,6 +268,7 @@ class StudioLifecycleTests(unittest.TestCase):
         approved = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.json()[0]["status"], "approved")
+        self.assertEqual(approved.json()[0]["display_name"], "Synthetic applicant")
 
     def test_professional_profile_is_editable_without_granting_admission(self) -> None:
         submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)

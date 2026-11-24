@@ -78,7 +78,7 @@ export function AdminApplicationsPage() {
               className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 transition-colors hover:bg-muted/40"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground">{item.professional_id}</p>
+                <p className="truncate text-sm font-medium text-foreground">{item.display_name || item.professional_id}</p>
                 <p className="truncate text-xs text-muted-foreground">
                   Submitted {new Date(item.created_at).toLocaleDateString()}
                   {item.missing_information.length > 0 && ` · ${item.missing_information.length} item(s) requested`}

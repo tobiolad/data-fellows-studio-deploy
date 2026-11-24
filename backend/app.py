@@ -820,7 +820,8 @@ def list_professional_admissions(
     require_global(actor, "admin", "reviewer")
     if postgres_mode():
         return postgres_repository().list_professional_admissions(status_filter)
-    records = list(store.professional_admissions.values())
+    records = [{**record, "display_name": store.professional_profiles.get(record["professional_id"], {}).get("display_name")}
+               for record in store.professional_admissions.values()]
     if status_filter:
         records = [record for record in records if record["status"] == status_filter]
     return sorted(records, key=lambda record: (record["created_at"], record["professional_id"]))

@@ -118,6 +118,8 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         admissions = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
         self.assertEqual(admissions.status_code, 200)
         self.assertTrue(any(item["professional_id"] == "postgres-professional" for item in admissions.json()))
+        roster_entry = next(item for item in admissions.json() if item["professional_id"] == "postgres-professional")
+        self.assertEqual(roster_entry["display_name"], "Synthetic applicant")
         reviewer_admissions = self.client.get("/api/professionals/admissions?status_filter=approved", headers=auth("postgres-reviewer", "reviewer"))
         self.assertEqual(reviewer_admissions.status_code, 200)
         self.assertTrue(any(item["professional_id"] == "postgres-professional" for item in reviewer_admissions.json()))

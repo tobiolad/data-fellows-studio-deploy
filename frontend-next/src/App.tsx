@@ -16,7 +16,10 @@ import { AdminProjectsPage } from "@/pages/admin/Projects"
 import { AdminProjectDetailPage } from "@/pages/admin/ProjectDetail"
 import { AdminAiOperationsPage } from "@/pages/admin/AiOperations"
 import { AdminAccountsPage } from "@/pages/admin/Accounts"
+import { AdminProfessionalsPage } from "@/pages/admin/Professionals"
+import { AdminSettingsPage } from "@/pages/admin/Settings"
 import { ClientOverviewPage } from "@/pages/client/Overview"
+import { ClientProjectsPage } from "@/pages/client/Projects"
 import { ClientDeliverablesPage } from "@/pages/client/Deliverables"
 import { ClientMessagesPage } from "@/pages/client/Messages"
 import { ProfessionalOverviewPage } from "@/pages/professional/Overview"
@@ -43,15 +46,15 @@ export function App() {
       <Route path="/admin/projects" element={<RequireAuth role="admin"><AdminProjectsPage /></RequireAuth>} />
       <Route path="/admin/projects/:id" element={<RequireAuth role="admin"><AdminProjectDetailPage /></RequireAuth>} />
       <Route path="/admin/accounts" element={<RequireAuth role="admin"><AdminAccountsPage /></RequireAuth>} />
-      <Route path="/admin/professionals" element={<RequireAuth role="admin"><ComingSoonPage title="Professional network" /></RequireAuth>} />
+      <Route path="/admin/professionals" element={<RequireAuth role="admin"><AdminProfessionalsPage /></RequireAuth>} />
       <Route path="/admin/applications" element={<RequireAuth role="admin"><AdminApplicationsPage /></RequireAuth>} />
       <Route path="/admin/applications/:id" element={<RequireAuth role="admin"><AdminApplicationDetailPage /></RequireAuth>} />
       <Route path="/admin/ai" element={<RequireAuth role="admin"><AdminAiOperationsPage /></RequireAuth>} />
       <Route path="/admin/referrals" element={<RequireAuth role="admin"><AdminReferralsPage /></RequireAuth>} />
-      <Route path="/admin/settings" element={<RequireAuth role="admin"><ComingSoonPage title="Settings" /></RequireAuth>} />
+      <Route path="/admin/settings" element={<RequireAuth role="admin"><AdminSettingsPage /></RequireAuth>} />
 
       <Route path="/client" element={<RequireAuth role="client"><ClientOverviewPage /></RequireAuth>} />
-      <Route path="/client/projects" element={<RequireAuth role="client"><ComingSoonPage title="Projects & engagements" /></RequireAuth>} />
+      <Route path="/client/projects" element={<RequireAuth role="client"><ClientProjectsPage /></RequireAuth>} />
       <Route path="/client/deliverables" element={<RequireAuth role="client"><ClientDeliverablesPage /></RequireAuth>} />
       <Route path="/client/messages" element={<RequireAuth role="client"><ClientMessagesPage /></RequireAuth>} />
       <Route path="/client/billing" element={<RequireAuth role="client"><ComingSoonPage title="Billing" /></RequireAuth>} />

@@ -746,21 +746,23 @@ class PostgresRepository:
             cursor = connection.cursor()
             if status:
                 cursor.execute(
-                    """SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at,
-                                      decision_reason, missing_information, assessment_requests, next_action
-                       FROM professional_admissions WHERE status = %s ORDER BY created_at, professional_id""",
+                    """SELECT a.professional_id, a.status, a.decided_by, a.decided_at, a.created_at, a.reviewed_at,
+                                      a.decision_reason, a.missing_information, a.assessment_requests, a.next_action, p.display_name
+                       FROM professional_admissions a LEFT JOIN professional_profiles p ON p.professional_id = a.professional_id
+                       WHERE a.status = %s ORDER BY a.created_at, a.professional_id""",
                     (status,),
                 )
             else:
                 cursor.execute(
-                    """SELECT professional_id, status, decided_by, decided_at, created_at, reviewed_at,
-                                      decision_reason, missing_information, assessment_requests, next_action
-                       FROM professional_admissions ORDER BY created_at, professional_id"""
+                    """SELECT a.professional_id, a.status, a.decided_by, a.decided_at, a.created_at, a.reviewed_at,
+                                      a.decision_reason, a.missing_information, a.assessment_requests, a.next_action, p.display_name
+                       FROM professional_admissions a LEFT JOIN professional_profiles p ON p.professional_id = a.professional_id
+                       ORDER BY a.created_at, a.professional_id"""
                 )
             return [
                 {"professional_id": row[0], "status": row[1], "decided_by": row[2], "decided_at": row[3], "created_at": row[4],
                  "reviewed_at": row[5], "decision_reason": row[6], "missing_information": row[7],
-                 "assessment_requests": row[8], "next_action": row[9]}
+                 "assessment_requests": row[8], "next_action": row[9], "display_name": row[10]}
                 for row in cursor.fetchall()
             ]
 

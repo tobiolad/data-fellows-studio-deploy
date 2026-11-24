@@ -1,14 +1,23 @@
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Mail, UserCheck } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { api } from "@/lib/api"
-import type { Role, StudioAccount } from "@/lib/types"
+import type { Organization, Role, StudioAccount } from "@/lib/types"
 
 const ASSIGNABLE_ROLES: { role: Role; label: string }[] = [
   { role: "admin", label: "Internal admin" },
@@ -17,8 +26,81 @@ const ASSIGNABLE_ROLES: { role: Role; label: string }[] = [
   { role: "reviewer", label: "Reviewer" },
 ]
 
+/** Granting "client" also needs an organization membership, or the person sees an empty portal
+ *  (client-scoped routes require both the global role and a membership row). Ask for the
+ *  organization in the same action rather than sending the admin to a second screen. */
+function ClientOrganizationDialog({
+  account,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  account: StudioAccount
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDone: () => void
+}) {
+  const [organizationId, setOrganizationId] = useState("")
+  const organizations = useQuery({
+    queryKey: ["organizations"],
+    queryFn: () => api.get<Organization[]>("/organizations"),
+    enabled: open,
+  })
+
+  const confirm = useMutation({
+    mutationFn: async () => {
+      await api.post(`/accounts/${account.id}/role`, { role: "client" })
+      await api.post(`/organizations/${organizationId}/members`, { actor_id: account.id, role: "client" })
+    },
+    onSuccess: () => {
+      toast.success(`${account.name || account.email} added as a client`)
+      setOrganizationId("")
+      onOpenChange(false)
+      onDone()
+    },
+    onError: (error) => toast.error((error as Error).message),
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add {account.name || account.email} as a client</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Choose which organization they belong to. They&apos;ll see that organization&apos;s projects as soon as you confirm.
+        </p>
+        <Select value={organizationId} onValueChange={setOrganizationId}>
+          <SelectTrigger>
+            <SelectValue placeholder="Choose an organization" />
+          </SelectTrigger>
+          <SelectContent>
+            {organizations.data?.map((organization) => (
+              <SelectItem key={organization.id} value={organization.id}>
+                {organization.name}
+              </SelectItem>
+            ))}
+            {organizations.data?.length === 0 && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">No organizations yet — create one on Clients &amp; engagements first.</p>
+            )}
+          </SelectContent>
+        </Select>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!organizationId || confirm.isPending} onClick={() => confirm.mutate()}>
+            Add as client
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function AdminAccountsPage() {
   const queryClient = useQueryClient()
+  const [clientDialogFor, setClientDialogFor] = useState<StudioAccount | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ["accounts"],
@@ -33,6 +115,14 @@ export function AdminAccountsPage() {
     },
     onError: (error) => toast.error((error as Error).message),
   })
+
+  function chooseRole(account: StudioAccount, role: Role) {
+    if (role === "client") {
+      setClientDialogFor(account)
+      return
+    }
+    assignRole.mutate({ id: account.id, role })
+  }
 
   const pending = data?.filter((account) => !account.global_role) ?? []
   const assigned = data?.filter((account) => account.global_role) ?? []
@@ -72,7 +162,7 @@ export function AdminAccountsPage() {
                     </p>
                   </div>
                 </div>
-                <Select onValueChange={(role) => assignRole.mutate({ id: account.id, role: role as Role })}>
+                <Select onValueChange={(role) => chooseRole(account, role as Role)}>
                   <SelectTrigger className="w-44">
                     <SelectValue placeholder="Assign a role" />
                   </SelectTrigger>
@@ -118,6 +208,18 @@ export function AdminAccountsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {clientDialogFor && (
+        <ClientOrganizationDialog
+          account={clientDialogFor}
+          open={!!clientDialogFor}
+          onOpenChange={(open) => !open && setClientDialogFor(null)}
+          onDone={() => {
+            setClientDialogFor(null)
+            queryClient.invalidateQueries({ queryKey: ["accounts"] })
+          }}
+        />
+      )}
     </AppShell>
   )
 }
