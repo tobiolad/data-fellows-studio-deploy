@@ -26,11 +26,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col text-sidebar-foreground">
       <div className="flex items-center gap-2.5 px-5 pt-6 pb-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-primary font-heading text-sm font-semibold text-sidebar-primary-foreground">
-          D
-        </div>
+        <img src="/data-fellows-mark.svg" alt="Data Fellows" className="h-8 w-8 shrink-0 rounded-lg" />
         <div className="leading-tight">
-          <p className="text-sm font-semibold">Data Fellows</p>
+          <p className="font-heading text-sm font-semibold">Data Fellows</p>
           <p className="text-xs text-sidebar-foreground/60">Studio</p>
         </div>
       </div>

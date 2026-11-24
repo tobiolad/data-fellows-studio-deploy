@@ -40,9 +40,11 @@ export function SignInPage() {
       />
       <div className="w-full max-w-4xl">
         <div className="mb-10 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary font-heading text-lg font-semibold text-primary-foreground shadow-lg shadow-primary/30">
-            D
-          </div>
+          <img
+            src="/data-fellows-mark.svg"
+            alt="Data Fellows"
+            className="mb-4 h-14 w-14 rounded-2xl shadow-lg shadow-primary/20"
+          />
           <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">Data Fellows Studio</h1>
           <p className="mt-2 max-w-md text-sm text-muted-foreground">
             The operating platform for engagements, delivery, AI execution and quality across Data Fellows.
