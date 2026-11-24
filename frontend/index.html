@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Data Fellows Studio — synthetic pilot</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">DATA FELLOWS 2035</p>
+        <h1>Managed delivery studio</h1>
+        <p class="lede">A synthetic vertical slice for accountable client delivery, approved professionals and bounded AI execution.</p>
+        <p class="warning" role="status">Synthetic harness only. Microsoft Entra authentication and production services are not configured.</p>
+      </header>
+      <section class="toolbar" aria-label="Synthetic identity">
+        <label>Role
+          <select id="role">
+            <option value="admin">Internal admin</option>
+            <option value="reviewer">Internal reviewer</option>
+            <option value="professional">Approved professional</option>
+            <option value="client">Client</option>
+          </select>
+        </label>
+        <label>Actor ID <input id="actor" value="admin-1" /></label>
+        <button id="refresh">Refresh workspace</button>
+      </section>
+      <section class="grid" aria-label="Studio portals">
+        <article><h2>Mission Control</h2><p>Create organizations, projects, assignments, AI runs and reviews.</p></article>
+        <article><h2>Client portal</h2><p>View approved deliverables and record acceptance.</p></article>
+        <article><h2>Professional portal</h2><p>See only accepted assignments and submit versioned work.</p></article>
+      </section>
+      <section class="card">
+        <h2>Workspace status</h2>
+        <pre id="output" aria-live="polite">Choose a synthetic identity and refresh.</pre>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
