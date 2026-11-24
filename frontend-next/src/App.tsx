@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { useAuth } from "@/lib/auth"
 import { RequireAuth } from "@/components/RequireAuth"
 import { SignInPage } from "@/pages/SignIn"
+import { SsoCallbackPage } from "@/pages/SsoCallback"
+import { PendingApprovalPage } from "@/pages/PendingApproval"
 import { ReferralRedirectPage } from "@/pages/ReferralRedirect"
 import { ReferralStatsPage } from "@/pages/ReferralStats"
 import { ComingSoonPage } from "@/pages/ComingSoon"
@@ -13,6 +15,7 @@ import { AdminEngagementsPage } from "@/pages/admin/Engagements"
 import { AdminProjectsPage } from "@/pages/admin/Projects"
 import { AdminProjectDetailPage } from "@/pages/admin/ProjectDetail"
 import { AdminAiOperationsPage } from "@/pages/admin/AiOperations"
+import { AdminAccountsPage } from "@/pages/admin/Accounts"
 import { ClientOverviewPage } from "@/pages/client/Overview"
 import { ClientDeliverablesPage } from "@/pages/client/Deliverables"
 import { ClientMessagesPage } from "@/pages/client/Messages"
@@ -30,6 +33,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/sign-in" element={<SignInPage />} />
+      <Route path="/sso-callback" element={<SsoCallbackPage />} />
+      <Route path="/pending-approval" element={<PendingApprovalPage />} />
       <Route path="/r/view/:token" element={<ReferralStatsPage />} />
       <Route path="/r/:code" element={<ReferralRedirectPage />} />
 
@@ -37,6 +42,7 @@ export function App() {
       <Route path="/admin/engagements" element={<RequireAuth role="admin"><AdminEngagementsPage /></RequireAuth>} />
       <Route path="/admin/projects" element={<RequireAuth role="admin"><AdminProjectsPage /></RequireAuth>} />
       <Route path="/admin/projects/:id" element={<RequireAuth role="admin"><AdminProjectDetailPage /></RequireAuth>} />
+      <Route path="/admin/accounts" element={<RequireAuth role="admin"><AdminAccountsPage /></RequireAuth>} />
       <Route path="/admin/professionals" element={<RequireAuth role="admin"><ComingSoonPage title="Professional network" /></RequireAuth>} />
       <Route path="/admin/applications" element={<RequireAuth role="admin"><AdminApplicationsPage /></RequireAuth>} />
       <Route path="/admin/applications/:id" element={<RequireAuth role="admin"><AdminApplicationDetailPage /></RequireAuth>} />

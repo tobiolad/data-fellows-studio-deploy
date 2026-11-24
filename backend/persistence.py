@@ -1535,6 +1535,65 @@ class PostgresRepository:
                 return None
             return {"partner_name": row[0], "code": row[1], "status": row[2], "created_at": row[3], "visit_count": row[4], "signup_count": row[5]}
 
+    def upsert_google_account(self, email: str, name: str, avatar_url: str | None) -> dict[str, Any]:
+        """Create or refresh the Studio account for a Google-verified email.
+
+        A new account has no global_role (pending) until an admin assigns
+        one; an existing account's profile fields refresh on every sign-in
+        but its role is left untouched here.
+        """
+        normalized_email = email.strip().lower()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO accounts(id, email, name, avatar_url, last_login_at)
+                   VALUES (%s, %s, %s, %s, now())
+                   ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, last_login_at = now()
+                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at""",
+                (uuid4(), normalized_email, name, avatar_url),
+            )
+            return self._account_row(cursor.fetchone())
+
+    def get_account(self, account_id: UUID) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT id, email, name, avatar_url, global_role, created_at, last_login_at FROM accounts WHERE id = %s",
+                (account_id,),
+            )
+            row = cursor.fetchone()
+            return self._account_row(row) if row is not None else None
+
+    def list_accounts(self, role: str | None = None) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            columns = "id, email, name, avatar_url, global_role, created_at, last_login_at"
+            if role == "pending":
+                cursor.execute(f"SELECT {columns} FROM accounts WHERE global_role IS NULL ORDER BY created_at")
+            elif role is not None:
+                cursor.execute(f"SELECT {columns} FROM accounts WHERE global_role = %s ORDER BY created_at", (role,))
+            else:
+                cursor.execute(f"SELECT {columns} FROM accounts ORDER BY created_at")
+            return [self._account_row(row) for row in cursor.fetchall()]
+
+    def set_account_role(self, actor_id: str, account_id: UUID, role: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """UPDATE accounts SET global_role = %s WHERE id = %s
+                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at""",
+                (role, account_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Account not found")
+            self._audit(cursor, None, actor_id, "account.role_assigned", "account", str(account_id), {"role": role})
+            return self._account_row(row)
+
+    @staticmethod
+    def _account_row(row: Any) -> dict[str, Any]:
+        return {"id": str(row[0]), "email": row[1], "name": row[2], "avatar_url": row[3], "global_role": row[4], "created_at": row[5], "last_login_at": row[6]}
+
     @staticmethod
     def _require_owner(cursor: Any, organization_id: UUID, actor_id: str) -> None:
         cursor.execute(

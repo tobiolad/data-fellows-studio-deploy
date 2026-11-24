@@ -22,6 +22,14 @@ from pydantic import BaseModel, Field
 from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval, evidence_status
 from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
 from backend import model_gateway
+from backend.google_auth import (
+    GOOGLE_ENABLED_ENV,
+    GoogleAuthError,
+    GoogleOAuthClient,
+    GoogleOAuthSettings,
+    issue_session_token,
+    validate_session_token,
+)
 from backend.persistence import PersistenceConfigurationError, PostgresRepository, SYNTHETIC_AGENT_ID
 
 
@@ -114,8 +122,14 @@ app.add_middleware(
 
 
 def identity(request: Request) -> Identity:
-    """Use the synthetic adapter only in tests; otherwise validate Entra JWTs."""
+    """Use the synthetic adapter only in tests; otherwise validate Entra or Studio-issued Google session JWTs."""
     header = request.headers.get("authorization", "")
+    if header.startswith("Bearer studio:") and os.getenv(GOOGLE_ENABLED_ENV, "false").lower() == "true":
+        try:
+            principal = validate_session_token(header.removeprefix("Bearer studio:"))
+        except GoogleAuthError as exc:
+            raise HTTPException(status_code=401, detail="Bearer token validation failed") from exc
+        return Identity(principal.actor_id, principal.roles)
     if os.getenv("STUDIO_TEST_MODE", "false").lower() == "true":
         if os.getenv("STUDIO_ENV", "development").strip().lower() in {"staging", "production"}:
             raise HTTPException(status_code=503, detail="Synthetic authentication is disabled in deployed environments")
@@ -335,6 +349,15 @@ class ReferralLinkCreate(BaseModel):
     partner_name: str = Field(min_length=2, max_length=160)
 
 
+class GoogleSignIn(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+
+
+class AccountRoleAssignment(BaseModel):
+    role: Literal["admin", "reviewer", "professional", "client"]
+
+
 class DiagnosticLinkCreate(BaseModel):
     organization_id: str
     source_engagement_id: str = Field(min_length=2, max_length=160)
@@ -467,15 +490,85 @@ def ready() -> dict:
     return {"status": "ready", "environment": deployment_env, "persistence": persistence, "checks": checks}
 
 
+def _authentication_method(request: Request) -> str:
+    if request.headers.get("authorization", "").startswith("Bearer studio:"):
+        return "google"
+    if os.getenv("STUDIO_TEST_MODE", "").lower() == "true":
+        return "synthetic-test"
+    return "entra"
+
+
 @app.get("/api/me")
 def me(request: Request) -> dict:
     actor = identity(request)
-    result = {"id": actor.actor_id, "roles": sorted(actor.roles), "authentication": "synthetic-test" if os.getenv("STUDIO_TEST_MODE", "").lower() == "true" else "entra"}
+    result = {"id": actor.actor_id, "roles": sorted(actor.roles), "authentication": _authentication_method(request)}
     if "professional" in actor.roles:
         application = (postgres_repository().get_professional_application(actor.actor_id) if postgres_mode()
                        else store.professional_admissions.get(actor.actor_id))
         result["admission_status"] = application["status"] if application else None
     return result
+
+
+@app.post("/api/auth/google")
+def google_sign_in(body: GoogleSignIn) -> dict:
+    """Verify a Google authorization code and return a Studio session.
+
+    A new account is created with no global_role (pending): the response's
+    `pending` flag tells the client to show the "waiting for an admin"
+    screen instead of a workspace, since every route still 403s an empty
+    role set regardless of what this endpoint returns.
+    """
+    if os.getenv(GOOGLE_ENABLED_ENV, "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Google sign-in requires PostgreSQL persistence")
+    try:
+        settings = GoogleOAuthSettings.from_environment()
+        identity_claim = GoogleOAuthClient(settings).exchange(body.code, body.redirect_uri)
+    except GoogleAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    account = postgres_repository().upsert_google_account(identity_claim.email, identity_claim.name, identity_claim.picture)
+    try:
+        token = issue_session_token(account["id"], account["email"], account["global_role"])
+    except GoogleAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "access_token": token,
+        "actor_id": account["id"],
+        "email": account["email"],
+        "name": account["name"],
+        "role": account["global_role"],
+        "pending": account["global_role"] is None,
+    }
+
+
+@app.get("/api/accounts")
+def list_accounts(request: Request, role: str | None = Query(default=None)) -> list[dict]:
+    """List Studio accounts created through Google sign-in. Admin only."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Accounts require PostgreSQL persistence")
+    if role is not None and role not in {"pending", "admin", "reviewer", "professional", "client"}:
+        raise HTTPException(status_code=422, detail="Unknown role filter")
+    return postgres_repository().list_accounts(role)
+
+
+@app.post("/api/accounts/{account_id}/role")
+def assign_account_role(account_id: str, body: AccountRoleAssignment, request: Request) -> dict:
+    """Grant a Studio-owned account its first (or a new) global role. Admin only."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Accounts require PostgreSQL persistence")
+    try:
+        account_uuid = UUID(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="account_id must be a UUID") from exc
+    try:
+        return postgres_repository().set_account_role(actor.actor_id, account_uuid, body.role)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Account not found") from exc
 
 
 @app.post("/api/organizations", status_code=status.HTTP_201_CREATED)

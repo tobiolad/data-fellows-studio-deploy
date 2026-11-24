@@ -3,6 +3,8 @@ const SESSION_KEY = "studio.session"
 export interface Session {
   actorId: string
   role: "admin" | "client" | "professional" | "reviewer"
+  /** Present only for a real (Google) sign-in; absent for the local synthetic dev picker. */
+  accessToken?: string
 }
 
 export function getSession(): Session | null {
@@ -33,7 +35,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   }
-  if (session) headers.Authorization = `Bearer test:${session.actorId}:${session.role}`
+  if (session) {
+    headers.Authorization = session.accessToken ? `Bearer studio:${session.accessToken}` : `Bearer test:${session.actorId}:${session.role}`
+  }
 
   const response = await fetch(`/api${path}`, { ...options, headers, cache: "no-store" })
   if (response.status === 204) return undefined as T

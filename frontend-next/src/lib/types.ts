@@ -237,3 +237,22 @@ export interface ReferralLink {
   signup_count: number
   view_token: string
 }
+
+export interface GoogleSignInResponse {
+  access_token: string
+  actor_id: string
+  email: string
+  name: string
+  role: Role | null
+  pending: boolean
+}
+
+export interface StudioAccount {
+  id: string
+  email: string
+  name: string
+  avatar_url: string | null
+  global_role: Role | null
+  created_at: string
+  last_login_at: string | null
+}

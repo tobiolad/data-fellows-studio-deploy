@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  UserCheck,
   UserCircle,
   Users,
 } from "lucide-react"
@@ -51,6 +52,7 @@ export const NAV_CONFIG: Record<Role, NavSection[]> = {
       items: [
         { label: "Professional network", to: "/admin/professionals", icon: Users },
         { label: "Applications & vetting", to: "/admin/applications", icon: FileCheck2, badgeKey: "pending_applications" },
+        { label: "People awaiting access", to: "/admin/accounts", icon: UserCheck },
       ],
     },
     {
