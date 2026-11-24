@@ -211,25 +211,38 @@ tenant, or anything involving Azure.
 
 ## Pending work (next recommended tasks, in dependency order)
 
-0. **Frontend rebuild continuation.** `frontend-next/` now has, all wired to
-   real backend data: sign-in, Admin overview/referrals/applications+review-
-   detail/engagements+membership/projects+work-packages+assignment, Client
-   overview/deliverables/messages, Professional overview/profile-wizard/
-   opportunities/assignments/deliverables. Still `ComingSoonPage` placeholder
-   (real, not hidden, just not built): Admin Professional network, AI
-   operations, Settings; Client Billing, Support; Professional "My
-   application" as its own page (status is already shown inline on the
-   Professional overview, just not a dedicated detail view); Reviewer
-   Admission review. That last one is blocked, not just undone: `GET
-   /api/professionals/admissions` is `admin`-only server-side (`backend/app.py`),
-   so there is no backend endpoint a reviewer can call to list admissions —
-   building that screen needs a backend change first, not just a frontend one.
+0. **Frontend rebuild — essentially feature-complete for the backend that
+   exists.** `frontend-next/` now covers every screen the sidebar links to
+   except four, all wired to real backend data, no mocks: sign-in; Admin
+   overview/referrals/applications+review-detail/engagements+membership/
+   projects+work-packages+assignment/AI-operations (agent registry +
+   register-agent dialog + run history with inline approve/reject); Client
+   overview/deliverables/messages; Professional overview/profile-wizard/
+   opportunities/assignments/deliverables/application-detail; Reviewer
+   submission-queue and admission-review (the exact same components as
+   Admin's, made role-aware via `basePath` computed from the session — no
+   duplicate implementation).
+   Still `ComingSoonPage` placeholder, and why: Admin Professional network
+   (would substantially duplicate Applications & vetting filtered to
+   `approved` — low enough value not to build a second screen for the same
+   data) and Settings (no backing API, nothing concrete to wire up); Client
+   Billing and Support (genuinely blocked on Phase Eight's Stripe
+   integration and Phase Seven's support-ticket system, neither of which
+   exist yet — building these would mean fabricating data, which the
+   handoff explicitly forbids).
+   Two real, narrow backend authorization gaps were found and fixed while
+   building the Reviewer screens (not from reading the code — from actually
+   clicking through the flow and hitting 403s): `GET
+   /api/professionals/admissions` and `GET /api/professionals/{id}/application`
+   were both missing the `reviewer` role even though a reviewer could
+   already decide on any admission via `POST .../review`. Both now allow
+   `admin` or `reviewer`, matching the authority reviewers already had.
    The old `frontend/` still works and is what's actually deployed by
    `ops/`/`Dockerfile`; cutting over (updating the container build, retiring
-   `frontend/`) is an owner decision once `frontend-next/` reaches parity, not
-   something to do silently. Real Entra sign-in still needs to replace
-   `frontend-next/src/pages/SignIn.tsx`'s synthetic picker, same gap the old
-   frontend had.
+   `frontend/`) is an owner decision once the owner has reviewed
+   `frontend-next/`, not something to do silently. Real Entra sign-in still
+   needs to replace `frontend-next/src/pages/SignIn.tsx`'s synthetic picker,
+   same gap the old frontend had.
 1. **Branch integration plan for the owner.** The 54-deep PR stack needs an
    owner-approved merge sequence; this session did not merge anything. This
    increment's commits live only on `claude/studio-ai-execution-handoff-8y0l2a`
