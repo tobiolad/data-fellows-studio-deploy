@@ -161,6 +161,20 @@ export interface AiAgent {
   created_at: string
 }
 
+export interface AdmissionListItem {
+  professional_id: string
+  status: "submitted" | "under_review" | "assessment" | "approved" | "declined" | "revoked"
+  decided_by: string | null
+  decided_at: string | null
+  created_at: string
+  reviewed_at: string | null
+  decision_reason: string
+  missing_information: string[]
+  assessment_requests: { title: string; detail?: string }[]
+  next_action: string
+  display_name?: string
+}
+
 export interface ReviewQueueItem {
   id: string
   title: string
