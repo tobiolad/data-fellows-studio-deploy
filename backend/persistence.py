@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1462,6 +1463,77 @@ class PostgresRepository:
                 )
             self._audit(cursor, organization_id, actor, "diagnostic_handoff.received", "diagnostic_handoff", str(handoff_id), {"source_report_id": source_report_id})
         return {"id": str(handoff_id), "engagement_id": str(engagement_id), "project_id": str(project_id), "created_at": created_at, "work_packages": work_packages}
+
+    def create_referral_link(self, partner_name: str, actor: str) -> dict[str, Any]:
+        link_id = uuid4()
+        code = secrets.token_hex(4).upper()
+        view_token = secrets.token_urlsafe(24)
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO referral_links(id, code, view_token, partner_name, created_by)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING status, created_at""",
+                (link_id, code, view_token, partner_name, actor),
+            )
+            status_value, created_at = cursor.fetchone()
+            self._audit(cursor, None, actor, "referral_link.created", "referral_link", str(link_id), {"partner_name": partner_name})
+        return {
+            "id": str(link_id), "code": code, "view_token": view_token, "partner_name": partner_name,
+            "created_by": actor, "status": status_value, "created_at": created_at, "visit_count": 0, "signup_count": 0,
+        }
+
+    def list_referral_links(self) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT l.id, l.code, l.view_token, l.partner_name, l.created_by, l.status, l.created_at,
+                          COUNT(*) FILTER (WHERE e.event_type = 'visit') AS visit_count,
+                          COUNT(*) FILTER (WHERE e.event_type = 'signup') AS signup_count
+                   FROM referral_links l LEFT JOIN referral_events e ON e.link_id = l.id
+                   GROUP BY l.id ORDER BY l.created_at DESC"""
+            )
+            columns = ["id", "code", "view_token", "partner_name", "created_by", "status", "created_at", "visit_count", "signup_count"]
+            return [dict(zip(columns, (str(row[0]), *row[1:]))) for row in cursor.fetchall()]
+
+    def record_referral_visit(self, code: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id FROM referral_links WHERE code = %s AND status = 'active'", (code,))
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Referral link not found")
+            cursor.execute(
+                "INSERT INTO referral_events(id, link_id, event_type) VALUES (%s, %s, 'visit')",
+                (uuid4(), row[0]),
+            )
+
+    def record_referral_signup(self, code: str, organization_id: UUID) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id FROM referral_links WHERE code = %s AND status = 'active'", (code,))
+            row = cursor.fetchone()
+            if row is None:
+                return
+            cursor.execute(
+                "INSERT INTO referral_events(id, link_id, event_type, referred_organization_id) VALUES (%s, %s, 'signup', %s)",
+                (uuid4(), row[0], organization_id),
+            )
+
+    def get_referral_stats_by_token(self, view_token: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT l.partner_name, l.code, l.status, l.created_at,
+                          COUNT(*) FILTER (WHERE e.event_type = 'visit') AS visit_count,
+                          COUNT(*) FILTER (WHERE e.event_type = 'signup') AS signup_count
+                   FROM referral_links l LEFT JOIN referral_events e ON e.link_id = l.id
+                   WHERE l.view_token = %s GROUP BY l.id""",
+                (view_token,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {"partner_name": row[0], "code": row[1], "status": row[2], "created_at": row[3], "visit_count": row[4], "signup_count": row[5]}
 
     @staticmethod
     def _require_owner(cursor: Any, organization_id: UUID, actor_id: str) -> None:

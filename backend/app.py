@@ -277,6 +277,7 @@ def memory_notification(project_id: str, recipient_group: str, kind: str, title:
 
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
+    referral_code: str | None = Field(default=None, min_length=6, max_length=40)
 
 
 class MemberGrant(BaseModel):
@@ -328,6 +329,10 @@ class AgentCreate(BaseModel):
     requires_human_approval: bool = True
     budget_cap_cents: int = Field(ge=1, le=100000)
     owner_actor_id: str = Field(min_length=2, max_length=120)
+
+
+class ReferralLinkCreate(BaseModel):
+    partner_name: str = Field(min_length=2, max_length=160)
 
 
 class DiagnosticLinkCreate(BaseModel):
@@ -478,7 +483,10 @@ def create_organization(body: OrganizationCreate, request: Request) -> dict:
     actor = identity(request)
     require_global(actor, "admin")
     if postgres_mode():
-        organization_id = postgres_repository().create_organization(body.name, actor.actor_id)
+        repo = postgres_repository()
+        organization_id = repo.create_organization(body.name, actor.actor_id)
+        if body.referral_code:
+            repo.record_referral_signup(body.referral_code, organization_id)
         return {"id": str(organization_id), "name": body.name, "created_at": now()}
     organization_id = str(uuid4())
     store.organizations[organization_id] = {"id": organization_id, "name": body.name, "created_at": now()}
@@ -1619,6 +1627,47 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     artifact["decision_comment"] = body.comment
     audit_response(actor, "ai_artifact", artifact["id"], f"ai_artifact.{body.decision}", organization_for_engagement(project["engagement_id"]))
     return artifact
+
+
+@app.post("/api/referral-links", status_code=status.HTTP_201_CREATED)
+def create_referral_link(body: ReferralLinkCreate, request: Request) -> dict:
+    """Create a trackable referral link for an onboarded partner (e.g. an accelerator)."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Referral links require PostgreSQL persistence")
+    return postgres_repository().create_referral_link(body.partner_name, actor.actor_id)
+
+
+@app.get("/api/referral-links")
+def list_referral_links(request: Request) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Referral links require PostgreSQL persistence")
+    return postgres_repository().list_referral_links()
+
+
+@app.post("/api/referral-links/{code}/visit", status_code=status.HTTP_204_NO_CONTENT)
+def record_referral_visit(code: str) -> None:
+    """Record a visit through a shared referral link. Unauthenticated: this is hit from a public landing page."""
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Referral links require PostgreSQL persistence")
+    try:
+        postgres_repository().record_referral_visit(code)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/referral/{view_token}/stats")
+def referral_stats(view_token: str) -> dict:
+    """Let a partner see their own link's performance using the token they were given, without a Studio account."""
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Referral links require PostgreSQL persistence")
+    stats = postgres_repository().get_referral_stats_by_token(view_token)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Referral link not found")
+    return stats
 
 
 @app.post("/api/diagnostic-links", status_code=status.HTTP_201_CREATED)

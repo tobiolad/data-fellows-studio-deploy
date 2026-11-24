@@ -7,10 +7,63 @@ increment.
 ## Current phase
 
 Phase Two (shared AI execution platform) — Agent Registry + Model Gateway
-— and a cross-repo increment: the BizPilot diagnostic-handoff receiver
-(Phase Four's Studio side). Phase Zero (takeover audit) is done. Phase
-Three (AI vetting) and the four portals have not been started by this
-session.
+— a cross-repo increment (BizPilot diagnostic-handoff receiver, Phase
+Four's Studio side), a new referral-tracking capability, and the start of
+Phase Six (a from-scratch frontend rebuild, owner-directed mid-session
+after visual review of the existing portals). Phase Zero (takeover audit)
+is done.
+
+## Increment 3: frontend rebuild (React + Tailwind + shadcn/ui) + referral links
+
+The owner reviewed screenshots of the existing `frontend/` (vanilla JS)
+portals this session and asked for a full rebuild with a modern design
+system — "every screen should scream excellence" — plus a referral-link
+feature for onboarded accelerator/partner organizations.
+
+**New frontend**: `frontend-next/` (Vite + React 19 + TypeScript + Tailwind
+v4 + shadcn/ui's "Nova" preset, Radix-based). Deliberately a *separate* app
+next to `frontend/`, not an in-place rewrite — `frontend/` keeps working
+undisturbed until the owner decides to cut over. It talks to the exact same
+backend API; no backend endpoint changed shape for the frontend's sake. See
+`frontend-next/README.md` for what's real vs. `ComingSoonPage` placeholder.
+
+Built this increment: sign-in (synthetic role picker, replacing the old
+"Developer test controls" raw form), `AppShell` layout (dark-navy sidebar
+matching the prior brand, indigo accent, role-aware nav), Admin overview,
+Admin referral program page, Client overview, Professional overview, the
+Reviewer submission queue (with approve/request-revision dialog wired to
+`POST /api/deliverables/{id}/review`), and the flagship: a 5-step animated
+profile-creation wizard (`src/pages/professional/ProfileWizard.tsx` —
+react-hook-form + zod, `useFieldArray` for experience/education/portfolio/
+evidence, framer-motion step transitions) that calls the existing
+`PUT /api/professionals/{id}/profile` then `POST /api/professionals/{id}/application`
+on submit. Verified by actually running it: seeded real data through the
+live backend, drove it with Playwright, and visually confirmed every page
+renders real data (screenshots were shown to the owner, not just described).
+
+One real bug caught by doing this for real rather than describing it: the
+Vite dev server's default port (5173) isn't arbitrary here — it's the exact
+origin the backend's CORS `allow_origins` list already permits
+(`backend/app.py`, alongside `127.0.0.1:5173`). Using a different port (8090
+in an earlier manual check) silently fails every API call with a CORS error
+and no visible app-level symptom beyond "Failed to fetch." If this ever
+needs a different port, add it to that allowlist first.
+
+**New backend capability — referral links** (not in the original master
+handoff; added because the owner asked for it alongside the UI rebuild):
+`migrations/013_referral_links.sql` (`referral_links`, `referral_events`).
+`POST /api/referral-links` (admin) creates a link with a short public `code`
+(shareable, e.g. `/r/<code>` records a visit) and a separate secret
+`view_token` the partner can use to see their own link's visit/signup counts
+at `GET /api/referral/<view_token>/stats` — no Studio account needed, by
+design, since an external accelerator partner has no reason to have one.
+`OrganizationCreate` gained an optional `referral_code`; creating an
+organization with one records a 'signup' event (best-effort — an invalid
+code doesn't fail organization creation). Organizations are still
+admin-created only (no public self-serve signup exists in this system), so
+"signup" here means an admin crediting a referral when onboarding a client
+that came through a partner, not a public form. `backend/test_referral_links.py`
+(5 tests). 63/63 backend tests pass (up from 58).
 
 ## Increment 2: BizPilot diagnostic-handoff receiver
 
@@ -137,23 +190,39 @@ export STUDIO_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/st
 <venv>/bin/python -m unittest discover -s backend -p 'test_*.py'
 ```
 
-Result after increment 1 (agent registry): **53 passed, 0 failed, 0
-skipped**. After increment 2 (diagnostic handoff): **58 passed, 0 failed, 0
-skipped** — both against a freshly created local PostgreSQL 16 database
-(the suite is not safe to re-run against a non-reset database — some tests
-accumulate state across runs; this is a pre-existing property of the
-suite, not something either increment changed).
+Result after increment 1 (agent registry): **53 passed**. After increment 2
+(diagnostic handoff): **58 passed**. After increment 3 (referral links):
+**63 passed, 0 failed, 0 skipped** — all against a freshly created local
+PostgreSQL 16 database each time (the suite is not safe to re-run against a
+non-reset database — some tests accumulate state across runs; this is a
+pre-existing property of the suite, not something any increment changed).
 
 Also for increment 2: a real cross-repo smoke test (live `uvicorn` Studio
 server + BizPilot's actual delivery code, no mocks) — see
-`docs/diagnostic-handoff.md`.
+`docs/diagnostic-handoff.md`. For increment 3: the new `frontend-next/` app
+was run for real (`npm run dev`, backend seeded with real data) and driven
+with Playwright to confirm every built page renders live data, not just
+that it type-checks and builds.
 
-Not run in this session: Playwright browser suite (`tests/playwright/`),
-container builds, CI workflows themselves (inspected, not executed),
-Entra against a real tenant, or anything involving Azure.
+Not run in this session: Playwright browser suite under `tests/playwright/`
+(the *old* frontend's, now stale against the new one), container builds, CI
+workflows themselves (inspected, not executed), Entra against a real
+tenant, or anything involving Azure.
 
 ## Pending work (next recommended tasks, in dependency order)
 
+0. **Frontend rebuild continuation.** `frontend-next/` has sign-in, Admin
+   overview, Admin referrals, Client overview, Professional overview, the
+   profile wizard, and the Reviewer queue. Everything else the sidebar links
+   to (engagements/projects/applications/AI-ops detail screens, client
+   deliverables/messages/billing/support, professional opportunities/
+   assignments/deliverables detail, reviewer admissions) is a `ComingSoonPage`
+   placeholder — real, not hidden, but not built. The old `frontend/` still
+   works and is what's actually deployed by `ops/`/`Dockerfile`; cutting over
+   (updating the container build, retiring `frontend/`) is an owner decision
+   once `frontend-next/` reaches parity, not something to do silently.
+   Real Entra sign-in still needs to replace `frontend-next/src/pages/SignIn.tsx`'s
+   synthetic picker, same gap the old frontend had.
 1. **Branch integration plan for the owner.** The 54-deep PR stack needs an
    owner-approved merge sequence; this session did not merge anything. This
    increment's commits live only on `claude/studio-ai-execution-handoff-8y0l2a`
