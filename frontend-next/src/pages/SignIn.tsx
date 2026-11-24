@@ -52,8 +52,8 @@ export function SignInPage() {
           </p>
         </div>
 
-        {googleSignInEnabled() && (
-          <Card className="mb-4 border-border/60 shadow-xl shadow-black/5">
+        {googleSignInEnabled() ? (
+          <Card className="border-border/60 shadow-xl shadow-black/5">
             <CardContent className="flex flex-col items-center gap-3 py-6 text-center">
               <Button size="lg" variant="outline" className="w-full max-w-xs gap-2 sm:w-auto" onClick={beginGoogleSignIn}>
                 <GoogleIcon className="h-4 w-4" />
@@ -62,58 +62,57 @@ export function SignInPage() {
               <p className="text-xs text-muted-foreground">New here? Signing in creates your account; an admin assigns your role.</p>
             </CardContent>
           </Card>
-        )}
-
-        <Card className="border-border/60 shadow-xl shadow-black/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xl">Choose your workspace</CardTitle>
-            <CardDescription>
-              {googleSignInEnabled()
-                ? "This local preview also lets you jump straight into any workspace with a synthetic identity."
-                : "Production sign-in uses Microsoft Entra. This local environment uses a synthetic identity so you can preview every workspace."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 pt-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {ROLE_OPTIONS.map(({ role, label, description, icon: Icon, defaultActor }) => (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => chooseRole(role, defaultActor)}
-                  className={cn(
-                    "group flex items-start gap-3 rounded-xl border p-4 text-left transition-all hover:border-primary/50 hover:shadow-md",
-                    selected === role ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/30" : "border-border bg-card",
-                  )}
-                >
-                  <span
+        ) : (
+          <Card className="border-border/60 shadow-xl shadow-black/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xl">Choose your workspace</CardTitle>
+              <CardDescription>
+                Production sign-in uses Google. This local environment uses a synthetic identity so you can preview
+                every workspace without real credentials.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 pt-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {ROLE_OPTIONS.map(({ role, label, description, icon: Icon, defaultActor }) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => chooseRole(role, defaultActor)}
                     className={cn(
-                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-                      selected === role ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground group-hover:text-foreground",
+                      "group flex items-start gap-3 rounded-xl border p-4 text-left transition-all hover:border-primary/50 hover:shadow-md",
+                      selected === role ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/30" : "border-border bg-card",
                     )}
                   >
-                    <Icon className="h-[18px] w-[18px]" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-medium text-foreground">{label}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <div className="flex flex-col gap-2 border-t border-border pt-5 sm:flex-row sm:items-end sm:justify-between">
-              <div className="w-full max-w-xs space-y-1.5">
-                <Label htmlFor="actor-id" className="text-xs text-muted-foreground">
-                  Synthetic identity
-                </Label>
-                <Input id="actor-id" value={actorId} onChange={(event) => setActorId(event.target.value)} />
+                    <span
+                      className={cn(
+                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                        selected === role ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground group-hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="h-[18px] w-[18px]" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-medium text-foreground">{label}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
+                    </span>
+                  </button>
+                ))}
               </div>
-              <Button size="lg" onClick={enter} className="w-full sm:w-auto">
-                Enter workspace
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+
+              <div className="flex flex-col gap-2 border-t border-border pt-5 sm:flex-row sm:items-end sm:justify-between">
+                <div className="w-full max-w-xs space-y-1.5">
+                  <Label htmlFor="actor-id" className="text-xs text-muted-foreground">
+                    Synthetic identity
+                  </Label>
+                  <Input id="actor-id" value={actorId} onChange={(event) => setActorId(event.target.value)} />
+                </div>
+                <Button size="lg" onClick={enter} className="w-full sm:w-auto">
+                  Enter workspace
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
