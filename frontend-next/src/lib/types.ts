@@ -161,6 +161,28 @@ export interface AiAgent {
   created_at: string
 }
 
+export interface ProjectMessage {
+  id: string
+  project_id: string
+  sender_id: string
+  recipient_group: "client" | "professional" | "internal"
+  body: string
+  created_at: string
+}
+
+export interface Opportunity {
+  id: string
+  title: string
+  summary: string
+  specialization?: string
+  skills: string[]
+  compensation?: string
+  deadline?: string | null
+  status: string
+  created_by?: string
+  created_at: string
+}
+
 export interface AdmissionListItem {
   professional_id: string
   status: "submitted" | "under_review" | "assessment" | "approved" | "declined" | "revoked"
