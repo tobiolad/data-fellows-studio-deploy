@@ -22,6 +22,11 @@ from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
+# Seeded in migrations/011_agent_registry.sql; kept as a constant so every
+# caller that omits an explicit agent_id resolves to the same registry row
+# the previous hardcoded "synthetic-planner-v1" literal represented.
+SYNTHETIC_AGENT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
 
 class PersistenceConfigurationError(RuntimeError):
     """Raised when production persistence is not configured safely."""
@@ -927,7 +932,72 @@ class PostgresRepository:
                 raise LookupError("Opportunity interest not found")
             return {"id": str(row[0]), "opportunity_id": str(row[1]), "professional_id": row[2], "approach": row[3], "status": row[4], "created_at": row[5]}
 
-    def create_ai_run(self, package_id: UUID, requested_by: str, specification: str, budget_cents: int, output: dict[str, Any]) -> tuple[UUID, UUID, UUID]:
+    def create_agent(self, actor_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        agent_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO ai_agents(id, name, purpose, capability_category, provider, model, model_version,
+                                          allowed_tools, data_access_scope, autonomy_level, requires_human_approval,
+                                          budget_cap_cents, owner_actor_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING created_at, status""",
+                (
+                    agent_id, fields["name"], fields["purpose"], fields["capability_category"],
+                    fields["provider"], fields["model"], fields["model_version"],
+                    json.dumps(fields["allowed_tools"]), fields["data_access_scope"], fields["autonomy_level"],
+                    fields["requires_human_approval"], fields["budget_cap_cents"], fields["owner_actor_id"],
+                ),
+            )
+            created_at, created_status = cursor.fetchone()
+            self._audit(cursor, None, actor_id, "ai_agent.registered", "ai_agent", str(agent_id), {"name": fields["name"], "provider": fields["provider"]})
+        return {"id": str(agent_id), "created_at": created_at, "status": created_status, **fields}
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT id, name, purpose, capability_category, provider, model, model_version, allowed_tools,
+                          data_access_scope, autonomy_level, requires_human_approval, budget_cap_cents,
+                          owner_actor_id, status, created_at
+                   FROM ai_agents ORDER BY created_at"""
+            )
+            columns = ["id", "name", "purpose", "capability_category", "provider", "model", "model_version",
+                       "allowed_tools", "data_access_scope", "autonomy_level", "requires_human_approval",
+                       "budget_cap_cents", "owner_actor_id", "status", "created_at"]
+            return [dict(zip(columns, (str(row[0]), *row[1:]))) for row in cursor.fetchall()]
+
+    def get_agent(self, agent_id: UUID) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT id, name, purpose, capability_category, provider, model, model_version, allowed_tools,
+                          data_access_scope, autonomy_level, requires_human_approval, budget_cap_cents,
+                          owner_actor_id, status, created_at
+                   FROM ai_agents WHERE id = %s""",
+                (agent_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            columns = ["id", "name", "purpose", "capability_category", "provider", "model", "model_version",
+                       "allowed_tools", "data_access_scope", "autonomy_level", "requires_human_approval",
+                       "budget_cap_cents", "owner_actor_id", "status", "created_at"]
+            return dict(zip(columns, (str(row[0]), *row[1:])))
+
+    def create_ai_run(
+        self,
+        package_id: UUID,
+        requested_by: str,
+        specification: str,
+        budget_cents: int,
+        output: dict[str, Any],
+        agent_id: UUID = SYNTHETIC_AGENT_ID,
+        agent_version: str = "synthetic-planner-v1",
+        provider: str = "synthetic",
+        model: str = "planner",
+        model_version: str = "planning-only-v1",
+    ) -> tuple[UUID, UUID, UUID]:
         run_id, artifact_id = uuid4(), uuid4()
         with self.transaction() as connection:
             cursor = connection.cursor()
@@ -944,9 +1014,10 @@ class PostgresRepository:
             organization_id = row[0]
             self._require_owner(cursor, organization_id, requested_by)
             cursor.execute(
-                """INSERT INTO ai_runs(id, work_package_id, requested_by, agent_version, policy_version, budget_cents, spent_cents, status, started_at, finished_at)
-                   VALUES (%s, %s, %s, 'synthetic-planner-v1', 'planning-only-v1', %s, 0, 'succeeded', now(), now())""",
-                (run_id, package_id, requested_by, budget_cents),
+                """INSERT INTO ai_runs(id, work_package_id, requested_by, agent_version, policy_version, budget_cents,
+                                        spent_cents, status, started_at, finished_at, agent_id, provider, model, model_version)
+                   VALUES (%s, %s, %s, %s, 'planning-only-v1', %s, 0, 'succeeded', now(), now(), %s, %s, %s, %s)""",
+                (run_id, package_id, requested_by, agent_version, budget_cents, agent_id, provider, model, model_version),
             )
             cursor.execute(
                 """INSERT INTO artifacts(id, run_id, version, content, status)
@@ -962,7 +1033,8 @@ class PostgresRepository:
             cursor.execute(
                 """SELECT r.id, r.work_package_id, r.requested_by, r.agent_version, r.policy_version,
                           r.budget_cents, r.spent_cents, r.status, r.cancel_requested,
-                          r.error_code, r.created_at, r.started_at, r.finished_at, e.organization_id
+                          r.error_code, r.created_at, r.started_at, r.finished_at, e.organization_id,
+                          r.agent_id, r.provider, r.model, r.model_version
                    FROM ai_runs r
                    JOIN work_packages w ON w.id = r.work_package_id
                    JOIN projects p ON p.id = w.project_id
@@ -999,6 +1071,10 @@ class PostgresRepository:
                 "created_at": row[10],
                 "started_at": row[11],
                 "finished_at": row[12],
+                "agent_id": str(row[14]) if row[14] else None,
+                "provider": row[15],
+                "model": row[16],
+                "model_version": row[17],
                 "artifact": None if artifact is None else {"id": str(artifact[0]), "version": artifact[1], "content": artifact[2], "status": artifact[3], "created_at": artifact[4]},
             }
 

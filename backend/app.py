@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 
 from backend.admission import QUALIFICATION_POLICY_VERSION, check_approval, evidence_status
 from backend.auth import EntraSettings, EntraTokenValidator, HttpJwksProvider, TokenValidationError
-from backend.persistence import PersistenceConfigurationError, PostgresRepository
+from backend import model_gateway
+from backend.persistence import PersistenceConfigurationError, PostgresRepository, SYNTHETIC_AGENT_ID
 
 
 def now() -> str:
@@ -311,6 +312,22 @@ class AIRunCreate(BaseModel):
     specification: str = Field(min_length=10, max_length=4000)
     tools: list[Literal["planning"]] = Field(default_factory=lambda: ["planning"], max_length=1)
     budget_cents: int = Field(default=100, ge=1, le=1000)
+    agent_id: str | None = None
+
+
+class AgentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    purpose: str = Field(min_length=2, max_length=2000)
+    capability_category: Literal["planning", "research", "code_generation", "qa", "vetting", "analytics"]
+    provider: str = Field(min_length=2, max_length=80)
+    model: str = Field(min_length=1, max_length=120)
+    model_version: str = Field(min_length=1, max_length=120)
+    allowed_tools: list[Literal["planning"]] = Field(min_length=1, max_length=5)
+    data_access_scope: Literal["none", "work_package", "organization"]
+    autonomy_level: Literal["supervised", "bounded_autonomous"]
+    requires_human_approval: bool = True
+    budget_cap_cents: int = Field(ge=1, le=100000)
+    owner_actor_id: str = Field(min_length=2, max_length=120)
 
 
 class Decision(BaseModel):
@@ -1418,30 +1435,68 @@ def decide_opportunity_interest(interest_id: str, decision: Literal["selected", 
     return record
 
 
+@app.post("/api/ai-agents", status_code=status.HTTP_201_CREATED)
+def register_agent(body: AgentCreate, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="The AI agent registry requires PostgreSQL persistence")
+    return postgres_repository().create_agent(actor.actor_id, body.model_dump())
+
+
+@app.get("/api/ai-agents")
+def list_agents(request: Request) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin", "reviewer")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="The AI agent registry requires PostgreSQL persistence")
+    return postgres_repository().list_agents()
+
+
+def _resolve_run_agent(repo: PostgresRepository, agent_id: str | None) -> dict:
+    lookup_id = UUID(agent_id) if agent_id else SYNTHETIC_AGENT_ID
+    agent = repo.get_agent(lookup_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="AI agent not found")
+    if agent["status"] != "active":
+        raise HTTPException(status_code=409, detail="AI agent is not active")
+    return agent
+
+
 @app.post("/api/ai-runs", status_code=status.HTTP_201_CREATED)
 def create_ai_run(body: AIRunCreate, request: Request) -> dict:
     actor = identity(request)
     if postgres_mode():
-        if body.tools != ["planning"]:
-            raise HTTPException(status_code=422, detail="Only the bounded planning tool is enabled")
-        output = {
-            "type": "work_breakdown",
-            "synthetic": True,
-            "steps": [
-                {"order": 1, "title": "Clarify approved requirements", "requires_approval": True},
-                {"order": 2, "title": "Prepare implementation checklist", "requires_approval": True},
-                {"order": 3, "title": "Review acceptance criteria", "requires_approval": True},
-            ],
-            "source_specification": body.specification,
-        }
-        validate_synthetic_output(output)
+        repo = postgres_repository()
+        agent = _resolve_run_agent(repo, body.agent_id)
+        if not set(body.tools).issubset(set(agent["allowed_tools"])):
+            raise HTTPException(status_code=422, detail="Requested tool is not permitted for this agent")
+        if body.budget_cents > agent["budget_cap_cents"]:
+            raise HTTPException(status_code=422, detail="Requested budget exceeds the agent's approved budget cap")
         try:
-            run_id, artifact_id, _ = postgres_repository().create_ai_run(UUID(body.work_package_id), actor.actor_id, body.specification, body.budget_cents, output)
+            adapter = model_gateway.resolve_adapter(agent["provider"])
+            result = adapter.run(body.specification, body.tools)
+        except model_gateway.ModelGatewayError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        validate_synthetic_output(result.output)
+        try:
+            run_id, artifact_id, _ = repo.create_ai_run(
+                UUID(body.work_package_id), actor.actor_id, body.specification, body.budget_cents, result.output,
+                agent_id=UUID(agent["id"]), agent_version=agent["name"],
+                provider=result.provider, model=result.model, model_version=result.model_version,
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"id": str(run_id), "work_package_id": body.work_package_id, "requested_by": actor.actor_id, "status": "succeeded", "budget_cents": body.budget_cents, "spent_cents": 0, "agent": "synthetic-planner-v1", "artifact_id": str(artifact_id), "artifact": {"id": str(artifact_id), "run_id": str(run_id), "status": "pending_review", "content": output}}
+        return {
+            "id": str(run_id), "work_package_id": body.work_package_id, "requested_by": actor.actor_id,
+            "status": "succeeded", "budget_cents": body.budget_cents, "spent_cents": 0,
+            "agent": agent["name"], "agent_id": agent["id"], "provider": result.provider,
+            "model": result.model, "model_version": result.model_version,
+            "artifact_id": str(artifact_id),
+            "artifact": {"id": str(artifact_id), "run_id": str(run_id), "status": "pending_review", "content": result.output},
+        }
     unsupported_memory_domain("AI runs")
     project = project_for_package(body.work_package_id)
     org_id = organization_for_engagement(project["engagement_id"])
