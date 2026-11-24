@@ -330,6 +330,30 @@ class AgentCreate(BaseModel):
     owner_actor_id: str = Field(min_length=2, max_length=120)
 
 
+class DiagnosticLinkCreate(BaseModel):
+    organization_id: str
+    source_engagement_id: str = Field(min_length=2, max_length=160)
+
+
+class DiagnosticHandoffWorkPackage(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    intervention: str = Field(min_length=2, max_length=4000)
+    outcome: str = Field(min_length=2, max_length=4000)
+    acceptance: str = Field(min_length=2, max_length=4000)
+    research_claim: dict | None = None
+
+
+class DiagnosticHandoffCreate(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    schema_version: int
+    engagement_id: str = Field(min_length=1, max_length=160)
+    report_id: str = Field(min_length=1, max_length=160)
+    report_version: int = Field(ge=1)
+    problem: str = Field(min_length=2, max_length=4000)
+    desired_outcome: str = Field(min_length=2, max_length=4000)
+    work_packages: list[DiagnosticHandoffWorkPackage] = Field(min_length=1, max_length=50)
+
+
 class Decision(BaseModel):
     decision: Literal["approved", "rejected"]
     comment: str = Field(default="", max_length=2000)
@@ -1595,6 +1619,67 @@ def decide_ai_run(run_id: str, body: Decision, request: Request) -> dict:
     artifact["decision_comment"] = body.comment
     audit_response(actor, "ai_artifact", artifact["id"], f"ai_artifact.{body.decision}", organization_for_engagement(project["engagement_id"]))
     return artifact
+
+
+@app.post("/api/diagnostic-links", status_code=status.HTTP_201_CREATED)
+def create_diagnostic_link(body: DiagnosticLinkCreate, request: Request) -> dict:
+    """Authorize one external BizPilot engagement to deliver handoffs into one Studio organization.
+
+    This is a deliberate, owner-initiated step (an owning admin links the
+    engagement) that must happen before any handoff for it is accepted. It
+    never happens automatically from a handoff payload.
+    """
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Diagnostic links require PostgreSQL persistence")
+    try:
+        return postgres_repository().create_diagnostic_link(UUID(body.organization_id), "bizpilot", body.source_engagement_id, actor.actor_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/diagnostic-handoffs", status_code=status.HTTP_201_CREATED)
+def receive_diagnostic_handoff(body: DiagnosticHandoffCreate, request: Request) -> dict:
+    """Receive one BizPilot diagnostic handoff and create its authorized Studio shell.
+
+    Creates an engagement, a project, and one work package per approved
+    recommendation -- status 'authorized'/'unassigned', for Studio staff to
+    plan and staff through the existing assignment and AI-run workflows.
+    Never auto-assigns a professional or starts an AI run. Idempotent on
+    (link, idempotency_key): a repeated delivery returns the same records.
+    """
+    actor = identity(request)
+    require_global(actor, "admin", "diagnostics_service")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Diagnostic handoffs require PostgreSQL persistence")
+    if body.schema_version != 1:
+        raise HTTPException(status_code=422, detail="Unsupported diagnostic handoff schema version")
+    repo = postgres_repository()
+    link = repo.get_diagnostic_link("bizpilot", body.engagement_id)
+    if link is None:
+        raise HTTPException(status_code=404, detail="No authorized Studio link exists for this diagnostic engagement")
+    existing = repo.get_diagnostic_handoff(UUID(link["id"]), body.idempotency_key)
+    if existing is not None:
+        return {**existing, "idempotent": True}
+    try:
+        engagement_id = repo.create_engagement(UUID(link["organization_id"]), f"BizPilot diagnostic {body.report_id[:40]}", body.desired_outcome, link["linked_by"])
+        project_id = repo.create_project(engagement_id, body.problem[:160], link["linked_by"])
+        work_packages = []
+        for item in body.work_packages:
+            evidence_references = (item.research_claim or {}).get("sources", [])
+            work_package_id = repo.create_work_package(project_id, item.intervention[:160], [item.acceptance], [], link["linked_by"])
+            work_packages.append({"id": str(work_package_id), "source_recommendation_id": item.id, "evidence_references": evidence_references})
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    record = repo.record_diagnostic_handoff(UUID(link["id"]), body.idempotency_key, body.report_id, body.report_version, engagement_id, project_id, work_packages, actor.actor_id)
+    return {**record, "idempotent": False}
 
 
 @app.post("/api/deliverables", status_code=status.HTTP_201_CREATED)

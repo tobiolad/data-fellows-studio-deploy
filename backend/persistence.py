@@ -1388,6 +1388,81 @@ class PostgresRepository:
                 for row in cursor.fetchall()
             ]
 
+    def create_diagnostic_link(self, organization_id: UUID, source_system: str, source_engagement_id: str, actor: str) -> dict[str, Any]:
+        link_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            self._require_owner(cursor, organization_id, actor)
+            cursor.execute("SELECT 1 FROM organizations WHERE id = %s", (organization_id,))
+            if cursor.fetchone() is None:
+                raise LookupError("Organization not found")
+            cursor.execute("SELECT 1 FROM diagnostic_links WHERE source_system = %s AND source_engagement_id = %s", (source_system, source_engagement_id))
+            if cursor.fetchone() is not None:
+                raise ValueError("This diagnostic engagement is already linked to a Studio organization")
+            cursor.execute(
+                """INSERT INTO diagnostic_links(id, organization_id, source_system, source_engagement_id, linked_by)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING created_at""",
+                (link_id, organization_id, source_system, source_engagement_id, actor),
+            )
+            created_at = cursor.fetchone()[0]
+            self._audit(cursor, organization_id, actor, "diagnostic_link.created", "diagnostic_link", str(link_id), {"source_engagement_id": source_engagement_id})
+        return {"id": str(link_id), "organization_id": str(organization_id), "source_system": source_system, "source_engagement_id": source_engagement_id, "linked_by": actor, "created_at": created_at}
+
+    def get_diagnostic_link(self, source_system: str, source_engagement_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT id, organization_id, linked_by FROM diagnostic_links WHERE source_system = %s AND source_engagement_id = %s",
+                (source_system, source_engagement_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {"id": str(row[0]), "organization_id": str(row[1]), "linked_by": row[2]}
+
+    def get_diagnostic_handoff(self, link_id: UUID, idempotency_key: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT id, engagement_id, project_id, created_at FROM diagnostic_handoffs
+                   WHERE link_id = %s AND idempotency_key = %s""",
+                (link_id, idempotency_key),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            handoff_id = row[0]
+            cursor.execute(
+                "SELECT work_package_id, source_recommendation_id, evidence_references FROM diagnostic_handoff_work_packages WHERE handoff_id = %s",
+                (handoff_id,),
+            )
+            work_packages = [{"id": str(item[0]), "source_recommendation_id": item[1], "evidence_references": item[2]} for item in cursor.fetchall()]
+            return {"id": str(handoff_id), "engagement_id": str(row[1]), "project_id": str(row[2]), "created_at": row[3], "work_packages": work_packages}
+
+    def record_diagnostic_handoff(
+        self, link_id: UUID, idempotency_key: str, source_report_id: str, source_report_version: int,
+        engagement_id: UUID, project_id: UUID, work_packages: list[dict[str, Any]], actor: str,
+    ) -> dict[str, Any]:
+        handoff_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT organization_id FROM engagements WHERE id = %s", (engagement_id,))
+            organization_id = cursor.fetchone()[0]
+            cursor.execute(
+                """INSERT INTO diagnostic_handoffs(id, link_id, idempotency_key, source_report_id, source_report_version, engagement_id, project_id, received_by)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING created_at""",
+                (handoff_id, link_id, idempotency_key, source_report_id, source_report_version, engagement_id, project_id, actor),
+            )
+            created_at = cursor.fetchone()[0]
+            for item in work_packages:
+                cursor.execute(
+                    """INSERT INTO diagnostic_handoff_work_packages(id, handoff_id, work_package_id, source_recommendation_id, evidence_references)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (uuid4(), handoff_id, UUID(item["id"]), item["source_recommendation_id"], json.dumps(item["evidence_references"])),
+                )
+            self._audit(cursor, organization_id, actor, "diagnostic_handoff.received", "diagnostic_handoff", str(handoff_id), {"source_report_id": source_report_id})
+        return {"id": str(handoff_id), "engagement_id": str(engagement_id), "project_id": str(project_id), "created_at": created_at, "work_packages": work_packages}
+
     @staticmethod
     def _require_owner(cursor: Any, organization_id: UUID, actor_id: str) -> None:
         cursor.execute(

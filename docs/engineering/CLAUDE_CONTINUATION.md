@@ -6,12 +6,34 @@ increment.
 
 ## Current phase
 
-Phase Two (shared AI execution platform) — first vertical slice: Agent
-Registry + Model Gateway, built on top of the existing `ai_runs`/`artifacts`
-review-gate pattern. Phase Zero (takeover audit) and the immediate items in
-section 21 of the master handoff ("D" through part of "F") are done; Phase
-Three (AI vetting), BizPilot work, and the other portals have not been
-started by this session.
+Phase Two (shared AI execution platform) — Agent Registry + Model Gateway
+— and a cross-repo increment: the BizPilot diagnostic-handoff receiver
+(Phase Four's Studio side). Phase Zero (takeover audit) is done. Phase
+Three (AI vetting) and the four portals have not been started by this
+session.
+
+## Increment 2: BizPilot diagnostic-handoff receiver
+
+See `docs/diagnostic-handoff.md` for the full contract. Summary: added
+`POST /api/diagnostic-links` (admin-only, owner-authorized linkage of one
+BizPilot engagement to one Studio organization) and
+`POST /api/diagnostic-handoffs` (idempotent receiver, requires `admin` or
+`diagnostics_service` role, creates an authorized engagement/project/work-
+package shell from BizPilot's existing handoff payload, never auto-assigns
+or runs AI). Migration `012_diagnostic_handoffs.sql`. New tests in
+`backend/test_diagnostic_handoff.py` (5 tests, all passing). The matching
+BizPilot-side change (wiring its existing but previously inert
+`handoff/delivery` endpoint to actually call this receiver, opt-in via
+`BIZPILOT_STUDIO_RECEIVER_URL`/`BIZPILOT_STUDIO_SERVICE_TOKEN`) is in
+`bizpilot-pro-concept` PR #16.
+
+This was verified across a real process boundary, not just with mocked
+unit tests on each side: a live Studio `uvicorn` server actually received
+an HTTP POST from BizPilot's real delivery code, carrying a handoff built
+through BizPilot's genuine case/finding/recommendation/report workflow,
+and the resulting Studio engagement/project/work-package were confirmed via
+Studio's own read endpoints. See `docs/diagnostic-handoff.md`'s "Verified
+end-to-end" section for exact commands if this needs reproducing.
 
 ## What was verified before any code was written
 
@@ -115,10 +137,16 @@ export STUDIO_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/st
 <venv>/bin/python -m unittest discover -s backend -p 'test_*.py'
 ```
 
-Result: **53 passed, 0 failed, 0 skipped**, against a freshly created local
-PostgreSQL 16 database (the suite is not safe to re-run against a
-non-reset database — some tests accumulate state across runs; this is a
-pre-existing property of the suite, not something this increment changed).
+Result after increment 1 (agent registry): **53 passed, 0 failed, 0
+skipped**. After increment 2 (diagnostic handoff): **58 passed, 0 failed, 0
+skipped** — both against a freshly created local PostgreSQL 16 database
+(the suite is not safe to re-run against a non-reset database — some tests
+accumulate state across runs; this is a pre-existing property of the
+suite, not something either increment changed).
+
+Also for increment 2: a real cross-repo smoke test (live `uvicorn` Studio
+server + BizPilot's actual delivery code, no mocks) — see
+`docs/diagnostic-handoff.md`.
 
 Not run in this session: Playwright browser suite (`tests/playwright/`),
 container builds, CI workflows themselves (inspected, not executed),
@@ -149,10 +177,10 @@ Entra against a real tenant, or anything involving Azure.
 5. **AI Vetting v1 (Phase Three)** builds on `backend/admission.py` and the
    versioned evidence-attestation policy already in place (migration
    `008_professional_admission_review.sql`) — not started.
-6. **BizPilot (Phase Four)** — not inspected in this session beyond
-   confirming its repo/branch layout (`main` default, PR #3 already merged,
-   several open `codex/*` branches). Needs its own audit pass before any
-   Studio handoff-contract work starts.
+6. **Diagnostic-handoff read-back** (`Diagnostics.Summary.Read` /
+   `Diagnostics.Handoff.Read` from BizPilot's contract) and a reviewer-facing
+   screen showing which projects came from a diagnostic handoff — not
+   started; see `docs/diagnostic-handoff.md`'s "Not yet implemented".
 7. The documented project-completion gap (one accepted deliverable can
    satisfy a multi-package project) was confirmed to still exist and was
    **not** fixed in this increment — it's an existing-behavior change, not
