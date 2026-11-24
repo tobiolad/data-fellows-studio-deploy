@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TagInput } from "@/components/TagInput"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, ApiError } from "@/lib/api"
+import { useAuth } from "@/lib/auth"
 import type { AdmissionApplication, ProfessionalProfile } from "@/lib/types"
 
 const DECISIONS = [
@@ -28,6 +29,8 @@ const DECISIONS = [
 export function AdminApplicationDetailPage() {
   const { id } = useParams<{ id: string }>()
   const professionalId = id!
+  const { session } = useAuth()
+  const basePath = session?.role === "reviewer" ? "/reviewer/admissions" : "/admin/applications"
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -76,7 +79,7 @@ export function AdminApplicationDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["admissions"] })
       queryClient.invalidateQueries({ queryKey: ["application", professionalId] })
       queryClient.invalidateQueries({ queryKey: ["admission-history", professionalId] })
-      navigate("/admin/applications")
+      navigate(basePath)
     },
     onError: (error) => toast.error((error as Error).message),
   })
@@ -91,7 +94,7 @@ export function AdminApplicationDetailPage() {
 
   return (
     <AppShell title={profile.data?.display_name || professionalId} description={professionalId}>
-      <Link to="/admin/applications" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link to={basePath} className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-3.5 w-3.5" /> Back to applications
       </Link>
 

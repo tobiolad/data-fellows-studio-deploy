@@ -249,13 +249,21 @@ class StudioLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(decision.status_code, 410)
 
-    def test_admission_queue_is_admin_only_and_tracks_decisions(self) -> None:
+    def test_admission_queue_is_admin_and_reviewer_only_and_tracks_decisions(self) -> None:
         submitted = self.client.post("/api/professionals/professional-1/application", headers=self.professional)
         self.assertEqual(submitted.status_code, 201)
         pending = self.client.get("/api/professionals/admissions?status_filter=submitted", headers=self.admin)
         self.assertEqual(pending.status_code, 200)
         self.assertEqual(pending.json()[0]["professional_id"], "professional-1")
+        reviewer_view = self.client.get("/api/professionals/admissions?status_filter=submitted", headers=self.reviewer)
+        self.assertEqual(reviewer_view.status_code, 200)
+        self.assertEqual(reviewer_view.json()[0]["professional_id"], "professional-1")
+        reviewer_application = self.client.get("/api/professionals/professional-1/application", headers=self.reviewer)
+        self.assertEqual(reviewer_application.status_code, 200)
+        self.assertEqual(reviewer_application.json()["professional_id"], "professional-1")
+        self.assertEqual(self.client.get("/api/professionals/professional-1/application", headers=self.client_user).status_code, 403)
         self.assertEqual(self.client.get("/api/professionals/admissions", headers=self.professional).status_code, 403)
+        self.assertEqual(self.client.get("/api/professionals/admissions", headers=self.client_user).status_code, 403)
         admit_professional(self.client, "professional-1", self.admin)
         approved = self.client.get("/api/professionals/admissions?status_filter=approved", headers=self.admin)
         self.assertEqual(approved.status_code, 200)

@@ -161,6 +161,24 @@ export interface AiAgent {
   created_at: string
 }
 
+export interface AiRunSummary {
+  id: string
+  work_package_id: string
+  requested_by: string
+  agent_version: string
+  policy_version: string
+  budget_cents: number
+  spent_cents: number
+  status: string
+  cancel_requested: boolean
+  error_code: string | null
+  created_at: string
+  work_package_title: string
+  project_name: string
+  engagement_name: string
+  artifact_status: string | null
+}
+
 export interface ProjectMessage {
   id: string
   project_id: string

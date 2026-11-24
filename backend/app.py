@@ -615,7 +615,7 @@ def submit_professional_application(professional_id: str, request: Request) -> d
 @app.get("/api/professionals/{professional_id}/application")
 def get_professional_application(professional_id: str, request: Request) -> dict:
     actor = identity(request)
-    if actor.actor_id != professional_id and "admin" not in actor.roles:
+    if actor.actor_id != professional_id and not actor.roles.intersection({"admin", "reviewer"}):
         raise HTTPException(status_code=403, detail="Application access is not authorized")
     if postgres_mode():
         record = postgres_repository().get_professional_application(professional_id)
@@ -714,7 +714,7 @@ def list_professional_admissions(
     status_filter: Literal["draft", "submitted", "under_review", "assessment", "pending", "approved", "declined", "rejected", "revoked"] | None = None,
 ) -> list[dict]:
     actor = identity(request)
-    require_global(actor, "admin")
+    require_global(actor, "admin", "reviewer")
     if postgres_mode():
         return postgres_repository().list_professional_admissions(status_filter)
     records = list(store.professional_admissions.values())

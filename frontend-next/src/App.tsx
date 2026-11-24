@@ -12,6 +12,7 @@ import { AdminApplicationDetailPage } from "@/pages/admin/ApplicationDetail"
 import { AdminEngagementsPage } from "@/pages/admin/Engagements"
 import { AdminProjectsPage } from "@/pages/admin/Projects"
 import { AdminProjectDetailPage } from "@/pages/admin/ProjectDetail"
+import { AdminAiOperationsPage } from "@/pages/admin/AiOperations"
 import { ClientOverviewPage } from "@/pages/client/Overview"
 import { ClientDeliverablesPage } from "@/pages/client/Deliverables"
 import { ClientMessagesPage } from "@/pages/client/Messages"
@@ -38,7 +39,7 @@ export function App() {
       <Route path="/admin/professionals" element={<RequireAuth role="admin"><ComingSoonPage title="Professional network" /></RequireAuth>} />
       <Route path="/admin/applications" element={<RequireAuth role="admin"><AdminApplicationsPage /></RequireAuth>} />
       <Route path="/admin/applications/:id" element={<RequireAuth role="admin"><AdminApplicationDetailPage /></RequireAuth>} />
-      <Route path="/admin/ai" element={<RequireAuth role="admin"><ComingSoonPage title="AI operations" /></RequireAuth>} />
+      <Route path="/admin/ai" element={<RequireAuth role="admin"><AdminAiOperationsPage /></RequireAuth>} />
       <Route path="/admin/referrals" element={<RequireAuth role="admin"><AdminReferralsPage /></RequireAuth>} />
       <Route path="/admin/settings" element={<RequireAuth role="admin"><ComingSoonPage title="Settings" /></RequireAuth>} />
 
@@ -57,7 +58,8 @@ export function App() {
       <Route path="/professional/deliverables" element={<RequireAuth role="professional"><ProfessionalDeliverablesPage /></RequireAuth>} />
 
       <Route path="/reviewer" element={<RequireAuth role="reviewer"><ReviewerOverviewPage /></RequireAuth>} />
-      <Route path="/reviewer/admissions" element={<RequireAuth role="reviewer"><ComingSoonPage title="Admission review" /></RequireAuth>} />
+      <Route path="/reviewer/admissions" element={<RequireAuth role="reviewer"><AdminApplicationsPage /></RequireAuth>} />
+      <Route path="/reviewer/admissions/:id" element={<RequireAuth role="reviewer"><AdminApplicationDetailPage /></RequireAuth>} />
 
       <Route path="/" element={<Navigate to={session ? `/${session.role}` : "/sign-in"} replace />} />
       <Route path="*" element={<Navigate to={session ? `/${session.role}` : "/sign-in"} replace />} />

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
+import { useAuth } from "@/lib/auth"
 import type { AdmissionListItem } from "@/lib/types"
 
 const STATUS_OPTIONS = [
@@ -30,6 +31,8 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 export function AdminApplicationsPage() {
+  const { session } = useAuth()
+  const basePath = session?.role === "reviewer" ? "/reviewer/admissions" : "/admin/applications"
   const [status, setStatus] = useState("all")
 
   const { data, isLoading } = useQuery({
@@ -63,7 +66,7 @@ export function AdminApplicationsPage() {
           {data?.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <span className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <FileCheck2 className="h-4.5 w-4.5" />
+                <FileCheck2 className="h-[18px] w-[18px]" />
               </span>
               <p className="text-sm text-muted-foreground">No applications in this status.</p>
             </div>
@@ -71,7 +74,7 @@ export function AdminApplicationsPage() {
           {data?.map((item) => (
             <Link
               key={item.professional_id}
-              to={`/admin/applications/${encodeURIComponent(item.professional_id)}`}
+              to={`${basePath}/${encodeURIComponent(item.professional_id)}`}
               className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 transition-colors hover:bg-muted/40"
             >
               <div className="min-w-0">
