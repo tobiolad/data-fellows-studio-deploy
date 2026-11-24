@@ -21,6 +21,7 @@ import { ProfileWizardPage } from "@/pages/professional/ProfileWizard"
 import { ProfessionalDeliverablesPage } from "@/pages/professional/Deliverables"
 import { ProfessionalAssignmentsPage } from "@/pages/professional/Assignments"
 import { ProfessionalOpportunitiesPage } from "@/pages/professional/Opportunities"
+import { ProfessionalApplicationPage } from "@/pages/professional/Application"
 import { ReviewerOverviewPage } from "@/pages/reviewer/Overview"
 
 export function App() {
@@ -53,7 +54,7 @@ export function App() {
       <Route path="/professional" element={<RequireAuth role="professional"><ProfessionalOverviewPage /></RequireAuth>} />
       <Route path="/professional/profile" element={<RequireAuth role="professional"><ProfileWizardPage /></RequireAuth>} />
       <Route path="/professional/opportunities" element={<RequireAuth role="professional"><ProfessionalOpportunitiesPage /></RequireAuth>} />
-      <Route path="/professional/application" element={<RequireAuth role="professional"><ComingSoonPage title="My application" /></RequireAuth>} />
+      <Route path="/professional/application" element={<RequireAuth role="professional"><ProfessionalApplicationPage /></RequireAuth>} />
       <Route path="/professional/assignments" element={<RequireAuth role="professional"><ProfessionalAssignmentsPage /></RequireAuth>} />
       <Route path="/professional/deliverables" element={<RequireAuth role="professional"><ProfessionalDeliverablesPage /></RequireAuth>} />
 
