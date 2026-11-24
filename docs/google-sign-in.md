@@ -43,18 +43,59 @@ picks up the new role.
 
 ## Configuration
 
-Entirely inert until an operator sets all three:
+Entirely inert until an operator sets all three (`STUDIO_GOOGLE_ENABLED`,
+`STUDIO_GOOGLE_CLIENT_ID`/`_SECRET`, `STUDIO_SESSION_SECRET`); the frontend
+only renders the "Continue with Google" button when `VITE_GOOGLE_CLIENT_ID`
+is set, so none of this is reachable without real credentials in place.
 
-- `STUDIO_GOOGLE_ENABLED=true`
-- `STUDIO_GOOGLE_CLIENT_ID`, `STUDIO_GOOGLE_CLIENT_SECRET` — from Studio's
-  own Google Cloud OAuth client, not a borrowed one, so the consent screen
-  says "Data Fellows Studio."
-- `STUDIO_SESSION_SECRET` — signs the session JWT; unrelated to Entra's
-  keys.
+### Google Cloud OAuth client registration
 
-The frontend only renders the "Continue with Google" button when
-`VITE_GOOGLE_CLIENT_ID` is set, so none of this is reachable without real
-credentials in place.
+The redirect URI is never a fixed string: both the browser
+(`googleRedirectUri()`, `frontend-next/src/lib/google-sign-in.ts`) and the
+backend's token exchange (`body.redirect_uri`, forwarded verbatim to Google
+by `GoogleOAuthClient.exchange`, `backend/google_auth.py`) build it as
+`<origin>/sso-callback` from whatever origin served the page. So every
+origin this flow may run from needs both lines registered on the **same**
+Google Cloud OAuth 2.0 Client ID (type: Web application), own project, not
+Inscend's:
+
+| Environment | Authorized JavaScript origin | Authorized redirect URI |
+|---|---|---|
+| Production | `https://studio.datafellowsai.com` | `https://studio.datafellowsai.com/sso-callback` |
+| Local development | `http://localhost:5173` | `http://localhost:5173/sso-callback` |
+| Local development (loopback) | `http://127.0.0.1:5173` | `http://127.0.0.1:5173/sso-callback` |
+
+Port 8100 (the backend) never appears here — the browser never redirects to
+it, only the frontend origin matters for Google's allowlist. A Vercel
+*preview* deployment gets a random `*.vercel.app` URL each time, which is
+not on this list: the Google button is harmless to leave rendered there
+(`VITE_GOOGLE_CLIENT_ID` can be the same value), but clicking it will fail
+with `redirect_uri_mismatch` until that exact preview URL is added, so
+Google sign-in is effectively production/local-only unless someone adds a
+preview URL deliberately.
+
+Google's own OAuth consent screen (branding, scopes shown to the user) is
+configured once on the same project; it is what makes this "Data Fellows
+Studio," not Inscend, asking for consent.
+
+### Where each variable is set
+
+| Variable | Secret? | Where | Scope |
+|---|---|---|---|
+| `STUDIO_GOOGLE_CLIENT_ID` | No (sent in the browser URL) | Backend host's env config | All environments it runs in |
+| `STUDIO_GOOGLE_CLIENT_SECRET` | **Yes** | Backend host's secret store | All environments it runs in |
+| `STUDIO_GOOGLE_ENABLED` | No | Backend host's env config | Set `true` only where the above two are also set |
+| `STUDIO_SESSION_SECRET` | **Yes** | Backend host's secret store | All environments it runs in; a different value per environment, never reused from local/dev into production |
+| `VITE_GOOGLE_CLIENT_ID` | No, but baked into the public JS bundle at build time — never put the client secret here | Vercel project → Settings → Environment Variables, scoped to **Production** (`studio.datafellowsai.com`) | Production |
+| `VITE_GOOGLE_CLIENT_ID` (same value) | No | `frontend-next/.env.local` (gitignored, never committed) | Local development only |
+
+The backend (`backend/`) is FastAPI + PostgreSQL, not a natural fit for
+Vercel's serverless functions (no long-lived connections, no persistent
+`uvicorn` process) — it needs its own host, decided separately from the
+Vercel frontend deployment. Wherever that is, `STUDIO_GOOGLE_CLIENT_SECRET`
+and `STUDIO_SESSION_SECRET` go in that host's secret manager, never in a
+`.env` file committed to the repo (both are already covered by `.gitignore`;
+only `.env.example`, with placeholder values, is tracked).
 
 ## What's not built
 
