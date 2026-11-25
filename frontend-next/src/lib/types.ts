@@ -274,6 +274,8 @@ export interface Invoice {
   paid_at: string | null
 }
 
+export type SignupIntent = "professional" | "client" | "team"
+
 export interface StudioAccount {
   id: string
   email: string
@@ -282,4 +284,5 @@ export interface StudioAccount {
   global_role: Role | null
   created_at: string
   last_login_at: string | null
+  signup_intent: SignupIntent | null
 }

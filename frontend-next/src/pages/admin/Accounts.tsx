@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
-import type { Organization, Role, StudioAccount } from "@/lib/types"
+import type { Organization, Role, SignupIntent, StudioAccount } from "@/lib/types"
 
 const ASSIGNABLE_ROLES: { role: Role; label: string }[] = [
   { role: "admin", label: "Internal admin" },
@@ -25,6 +25,14 @@ const ASSIGNABLE_ROLES: { role: Role; label: string }[] = [
   { role: "professional", label: "Professional" },
   { role: "reviewer", label: "Reviewer" },
 ]
+
+/** What the person said brought them here, shown next to their email so
+ *  you're not guessing from a bare address which role to assign. */
+const SIGNUP_INTENT_LABEL: Record<SignupIntent, string> = {
+  professional: "Says they're applying as a professional",
+  client: "Says they're joining as a client",
+  team: "Says they're joining their team",
+}
 
 /** Granting "client" also needs an organization membership, or the person sees an empty portal
  *  (client-scoped routes require both the global role and a membership row). Ask for the
@@ -160,6 +168,9 @@ export function AdminAccountsPage() {
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Mail className="h-3 w-3" /> {account.email}
                     </p>
+                    {account.signup_intent && (
+                      <p className="mt-0.5 text-xs font-medium text-primary">{SIGNUP_INTENT_LABEL[account.signup_intent]}</p>
+                    )}
                   </div>
                 </div>
                 <Select onValueChange={(role) => chooseRole(account, role as Role)}>

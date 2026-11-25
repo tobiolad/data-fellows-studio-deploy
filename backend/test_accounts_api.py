@@ -120,6 +120,62 @@ class GoogleAccountsIntegrationTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["name"], "Updated Name")
 
+    def test_a_pending_account_may_tag_itself_with_what_brought_it_here(self):
+        body = self._sign_in("hopeful-pro@example.com")
+        session_header = {"Authorization": f"Bearer studio:{body['access_token']}"}
+
+        response = self.client.post("/api/accounts/me/signup-intent", headers=session_header, json={"intent": "professional"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["signup_intent"], "professional")
+
+        row = next(item for item in self.client.get("/api/accounts?role=pending", headers=self.admin).json() if item["email"] == "hopeful-pro@example.com")
+        self.assertEqual(row["signup_intent"], "professional")
+
+    def test_setting_a_signup_intent_grants_nothing(self):
+        body = self._sign_in("still-waiting@example.com")
+        session_header = {"Authorization": f"Bearer studio:{body['access_token']}"}
+        self.client.post("/api/accounts/me/signup-intent", headers=session_header, json={"intent": "client"})
+
+        me = self.client.get("/api/me", headers=session_header)
+        self.assertEqual(me.json()["roles"], [])
+        denied = self.client.get("/api/referral-links", headers=session_header)
+        self.assertEqual(denied.status_code, 403)
+
+    def test_an_unknown_signup_intent_is_rejected(self):
+        body = self._sign_in("confused-visitor@example.com")
+        session_header = {"Authorization": f"Bearer studio:{body['access_token']}"}
+        response = self.client.post("/api/accounts/me/signup-intent", headers=session_header, json={"intent": "founder"})
+        self.assertEqual(response.status_code, 422)
+
+    def test_signup_intent_requires_a_valid_session(self):
+        response = self.client.post("/api/accounts/me/signup-intent", json={"intent": "professional"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_a_synthetic_test_identity_cannot_set_a_signup_intent(self):
+        # The synthetic test actor id is not a Studio account UUID, so this
+        # correctly 422s rather than writing to an arbitrary row.
+        response = self.client.post("/api/accounts/me/signup-intent", headers=self.admin, json={"intent": "team"})
+        self.assertEqual(response.status_code, 422)
+
+    def test_each_account_only_tags_its_own_row(self):
+        first = self._sign_in("first-visitor@example.com")
+        second = self._sign_in("second-visitor@example.com")
+        self.client.post(
+            "/api/accounts/me/signup-intent",
+            headers={"Authorization": f"Bearer studio:{first['access_token']}"},
+            json={"intent": "professional"},
+        )
+        self.client.post(
+            "/api/accounts/me/signup-intent",
+            headers={"Authorization": f"Bearer studio:{second['access_token']}"},
+            json={"intent": "client"},
+        )
+        accounts = self.client.get("/api/accounts", headers=self.admin).json()
+        first_row = next(item for item in accounts if item["email"] == "first-visitor@example.com")
+        second_row = next(item for item in accounts if item["email"] == "second-visitor@example.com")
+        self.assertEqual(first_row["signup_intent"], "professional")
+        self.assertEqual(second_row["signup_intent"], "client")
+
 
 if __name__ == "__main__":
     unittest.main()

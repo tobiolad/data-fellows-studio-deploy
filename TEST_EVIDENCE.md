@@ -29,6 +29,14 @@ it):
 116 passed, 10 warnings, 8 subtests passed in 5.86s
 ```
 
+**Updated, 25 November 2026, after the signup-intent feature** (migration
+`017_signup_intent.sql`, `POST /api/accounts/me/signup-intent`): same
+fresh-database method, now **122 passed** (6 new tests: a pending account
+tagging itself, the tag granting nothing, an unknown intent value
+rejected, no session rejected, a synthetic test identity rejected rather
+than writing an arbitrary row, and two accounts never touching each
+other's row). This is the new baseline going forward.
+
 **A real test-isolation defect was found and reproduced while gathering
 this evidence.** The first attempt to run the full suite used a
 `studio_test` database that already existed on this machine (left over

@@ -30,7 +30,7 @@ export function SsoCallbackPage() {
       .post<GoogleSignInResponse>("/auth/google", { code, redirect_uri: googleRedirectUri() })
       .then((body) => {
         if (body.pending || !body.role) {
-          navigate("/pending-approval", { replace: true, state: { email: body.email } })
+          navigate("/pending-approval", { replace: true, state: { email: body.email, accessToken: body.access_token } })
           return
         }
         signIn({ actorId: body.actor_id, role: body.role, accessToken: body.access_token })

@@ -396,6 +396,10 @@ class AccountRoleAssignment(BaseModel):
     role: Literal["admin", "reviewer", "professional", "client"]
 
 
+class SignupIntentUpdate(BaseModel):
+    intent: Literal["professional", "client", "team"]
+
+
 class SupportRequestCreate(BaseModel):
     subject: str = Field(min_length=2, max_length=200)
     body: str = Field(min_length=2, max_length=4000)
@@ -593,6 +597,25 @@ def google_sign_in(body: GoogleSignIn) -> dict:
         "role": account["global_role"],
         "pending": account["global_role"] is None,
     }
+
+
+@app.post("/api/accounts/me/signup-intent")
+def set_my_signup_intent(body: SignupIntentUpdate, request: Request) -> dict:
+    """Record what the signed-in account says brought them here. Anyone
+    with a valid session may set this on their own account, pending or
+    not -- it is read only by whoever assigns roles and grants nothing by
+    itself, so it needs no global role to set."""
+    actor = identity(request)
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Accounts require PostgreSQL persistence")
+    try:
+        account_uuid = UUID(actor.actor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Signup intent is only available to a Studio account") from exc
+    try:
+        return postgres_repository().set_signup_intent(account_uuid, body.intent)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Account not found") from exc
 
 
 @app.get("/api/accounts")

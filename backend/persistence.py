@@ -1791,7 +1791,7 @@ class PostgresRepository:
                 """INSERT INTO accounts(id, email, name, avatar_url, last_login_at)
                    VALUES (%s, %s, %s, %s, now())
                    ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, last_login_at = now()
-                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at""",
+                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at, signup_intent""",
                 (uuid4(), normalized_email, name, avatar_url),
             )
             return self._account_row(cursor.fetchone())
@@ -1800,7 +1800,7 @@ class PostgresRepository:
         with self.transaction() as connection:
             cursor = connection.cursor()
             cursor.execute(
-                "SELECT id, email, name, avatar_url, global_role, created_at, last_login_at FROM accounts WHERE id = %s",
+                "SELECT id, email, name, avatar_url, global_role, created_at, last_login_at, signup_intent FROM accounts WHERE id = %s",
                 (account_id,),
             )
             row = cursor.fetchone()
@@ -1809,7 +1809,7 @@ class PostgresRepository:
     def list_accounts(self, role: str | None = None) -> list[dict[str, Any]]:
         with self.transaction() as connection:
             cursor = connection.cursor()
-            columns = "id, email, name, avatar_url, global_role, created_at, last_login_at"
+            columns = "id, email, name, avatar_url, global_role, created_at, last_login_at, signup_intent"
             if role == "pending":
                 cursor.execute(f"SELECT {columns} FROM accounts WHERE global_role IS NULL ORDER BY created_at")
             elif role is not None:
@@ -1823,7 +1823,7 @@ class PostgresRepository:
             cursor = connection.cursor()
             cursor.execute(
                 """UPDATE accounts SET global_role = %s WHERE id = %s
-                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at""",
+                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at, signup_intent""",
                 (role, account_id),
             )
             row = cursor.fetchone()
@@ -1832,9 +1832,35 @@ class PostgresRepository:
             self._audit(cursor, None, actor_id, "account.role_assigned", "account", str(account_id), {"role": role})
             return self._account_row(row)
 
+    def set_signup_intent(self, account_id: UUID, intent: str) -> dict[str, Any]:
+        """Record what a person said brought them to Studio ("applying as a
+        professional", "joining as a client", "joining my team"). Purely a
+        hint for whoever assigns roles -- it never grants one itself, so no
+        audit event or authorization check is attached to it."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """UPDATE accounts SET signup_intent = %s WHERE id = %s
+                   RETURNING id, email, name, avatar_url, global_role, created_at, last_login_at, signup_intent""",
+                (intent, account_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Account not found")
+            return self._account_row(row)
+
     @staticmethod
     def _account_row(row: Any) -> dict[str, Any]:
-        return {"id": str(row[0]), "email": row[1], "name": row[2], "avatar_url": row[3], "global_role": row[4], "created_at": row[5], "last_login_at": row[6]}
+        return {
+            "id": str(row[0]),
+            "email": row[1],
+            "name": row[2],
+            "avatar_url": row[3],
+            "global_role": row[4],
+            "created_at": row[5],
+            "last_login_at": row[6],
+            "signup_intent": row[7],
+        }
 
     @staticmethod
     def _require_owner(cursor: Any, organization_id: UUID, actor_id: str) -> None:
