@@ -60,6 +60,7 @@ export const NAV_CONFIG: Record<Role, NavSection[]> = {
       items: [
         { label: "AI operations", to: "/admin/ai", icon: Sparkles, badgeKey: "ai_pending_approval" },
         { label: "Referral program", to: "/admin/referrals", icon: Gift },
+        { label: "Support inbox", to: "/admin/support", icon: LifeBuoy },
       ],
     },
     { label: "Administration", items: [{ label: "Settings", to: "/admin/settings", icon: Settings }] },

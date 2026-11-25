@@ -307,6 +307,85 @@ class PostgresRepository:
         )
         return PostgresRepository._invoice_dict(cursor.fetchone())
 
+    def create_support_request(self, organization_id: UUID, actor: str, subject: str, body: str) -> dict[str, Any]:
+        request_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL",
+                (organization_id, actor),
+            )
+            if cursor.fetchone() is None:
+                raise PermissionError("Organization membership is required to submit a support request")
+            cursor.execute(
+                """INSERT INTO support_requests(id, organization_id, submitted_by, subject, body)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (request_id, organization_id, actor, subject, body),
+            )
+            self._audit(cursor, organization_id, actor, "support_request.submitted", "support_request", str(request_id))
+            return self._support_request_row(cursor, request_id)
+
+    def list_support_requests(self, actor: str, admin: bool, organization_id: UUID | None = None,
+                               status_filter: str | None = None) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            clauses: list[str] = []
+            params: list[Any] = []
+            if organization_id is not None:
+                if not admin:
+                    cursor.execute(
+                        "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL",
+                        (organization_id, actor),
+                    )
+                    if cursor.fetchone() is None:
+                        raise PermissionError("Organization membership is required to view its support requests")
+                clauses.append("organization_id = %s")
+                params.append(organization_id)
+            elif not admin:
+                raise PermissionError("Only an admin may view support requests across every organization")
+            if status_filter:
+                clauses.append("status = %s")
+                params.append(status_filter)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            cursor.execute(
+                f"""SELECT r.id, r.organization_id, o.name, r.submitted_by, r.subject, r.body, r.status,
+                           r.resolved_by, r.resolved_at, r.created_at
+                    FROM support_requests r JOIN organizations o ON o.id = r.organization_id
+                    {where} ORDER BY r.created_at DESC""",
+                params,
+            )
+            return [self._support_request_dict(row) for row in cursor.fetchall()]
+
+    def resolve_support_request(self, request_id: UUID, actor: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """UPDATE support_requests SET status = 'resolved', resolved_by = %s, resolved_at = now()
+                   WHERE id = %s AND status = 'open' RETURNING organization_id""",
+                (actor, request_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError("Only an open support request can be resolved")
+            self._audit(cursor, row[0], actor, "support_request.resolved", "support_request", str(request_id))
+            return self._support_request_row(cursor, request_id)
+
+    @staticmethod
+    def _support_request_row(cursor: Any, request_id: UUID) -> dict[str, Any]:
+        cursor.execute(
+            """SELECT r.id, r.organization_id, o.name, r.submitted_by, r.subject, r.body, r.status,
+                      r.resolved_by, r.resolved_at, r.created_at
+               FROM support_requests r JOIN organizations o ON o.id = r.organization_id WHERE r.id = %s""",
+            (request_id,),
+        )
+        return PostgresRepository._support_request_dict(cursor.fetchone())
+
+    @staticmethod
+    def _support_request_dict(row: Any) -> dict[str, Any]:
+        return {"id": str(row[0]), "organization_id": str(row[1]), "organization_name": row[2], "submitted_by": row[3],
+                "subject": row[4], "body": row[5], "status": row[6], "resolved_by": row[7], "resolved_at": row[8],
+                "created_at": row[9]}
+
     @staticmethod
     def _invoice_dict(row: Any) -> dict[str, Any]:
         return {"id": str(row[0]), "organization_id": str(row[1]), "description": row[2], "amount_cents": row[3],

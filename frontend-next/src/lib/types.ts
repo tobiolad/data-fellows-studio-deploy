@@ -247,6 +247,19 @@ export interface GoogleSignInResponse {
   pending: boolean
 }
 
+export interface SupportRequest {
+  id: string
+  organization_id: string
+  organization_name: string
+  submitted_by: string
+  subject: string
+  body: string
+  status: "open" | "resolved"
+  resolved_by: string | null
+  resolved_at: string | null
+  created_at: string
+}
+
 export interface Invoice {
   id: string
   organization_id: string

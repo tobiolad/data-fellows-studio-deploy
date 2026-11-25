@@ -2,13 +2,14 @@ import { useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ArrowLeft, Plus, UserPlus } from "lucide-react"
+import { ArrowLeft, Check, MessageCircle, Plus, UserPlus, X } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { TagInput } from "@/components/TagInput"
 import {
   Dialog,
@@ -21,6 +22,102 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import type { WorkPackage } from "@/lib/types"
+
+interface ProjectRequest {
+  id: string
+  project_id: string
+  subject: string
+  created_at: string
+  decision: "approved" | "declined" | null
+  rationale: string | null
+  decided_at: string | null
+}
+
+function DecideDialog({ projectId, request, decision }: { projectId: string; request: ProjectRequest; decision: "approved" | "declined" }) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [rationale, setRationale] = useState("")
+
+  const decide = useMutation({
+    mutationFn: () => api.post(`/projects/${projectId}/requests/${request.id}/decision`, { decision, rationale }),
+    onSuccess: () => {
+      toast.success(decision === "approved" ? "Approved" : "Declined")
+      setOpen(false)
+      setRationale("")
+      queryClient.invalidateQueries({ queryKey: ["coordination", projectId] })
+    },
+    onError: (error) => toast.error((error as Error).message),
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant={decision === "approved" ? "default" : "outline"}>
+          {decision === "approved" ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+          {decision === "approved" ? "Approve" : "Decline"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{decision === "approved" ? "Approve" : "Decline"} "{request.subject}"</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label>Why (the client sees this)</Label>
+          <Textarea rows={3} value={rationale} onChange={(event) => setRationale(event.target.value)} />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={rationale.trim().length < 2 || decide.isPending} onClick={() => decide.mutate()}>
+            Confirm
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ProjectRequests({ projectId }: { projectId: string }) {
+  const coordination = useQuery({
+    queryKey: ["coordination", projectId],
+    queryFn: () => api.get<{ requests: ProjectRequest[] }>(`/projects/${projectId}/coordination`),
+  })
+
+  const requests = coordination.data?.requests ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <MessageCircle className="h-4 w-4 text-primary" /> Client requests
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {coordination.isLoading && <Skeleton className="h-16" />}
+        {requests.length === 0 && !coordination.isLoading && <p className="text-sm text-muted-foreground">No requests on this project.</p>}
+        {requests.map((request) => (
+          <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm text-foreground">{request.subject}</p>
+              {request.rationale && <p className="truncate text-xs text-muted-foreground">{request.rationale}</p>}
+            </div>
+            {request.decision ? (
+              <Badge variant="secondary" className={`shrink-0 capitalize ${request.decision === "approved" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+                {request.decision}
+              </Badge>
+            ) : (
+              <div className="flex shrink-0 gap-2">
+                <DecideDialog projectId={projectId} request={request} decision="approved" />
+                <DecideDialog projectId={projectId} request={request} decision="declined" />
+              </div>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
 
 const STATUS_STYLES: Record<string, string> = {
   unassigned: "bg-muted text-muted-foreground",
@@ -138,6 +235,10 @@ export function AdminProjectDetailPage() {
       <Link to="/admin/projects" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-3.5 w-3.5" /> Back to projects
       </Link>
+
+      <div className="mb-4">
+        <ProjectRequests projectId={projectId} />
+      </div>
 
       <div className="space-y-3">
         {packages.isLoading && <Skeleton className="h-24" />}

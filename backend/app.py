@@ -396,6 +396,11 @@ class AccountRoleAssignment(BaseModel):
     role: Literal["admin", "reviewer", "professional", "client"]
 
 
+class SupportRequestCreate(BaseModel):
+    subject: str = Field(min_length=2, max_length=200)
+    body: str = Field(min_length=2, max_length=4000)
+
+
 class InvoiceCreate(BaseModel):
     description: str = Field(min_length=2, max_length=500)
     amount_cents: int = Field(ge=100, le=100_000_000)
@@ -855,6 +860,49 @@ async def stripe_webhook(request: Request) -> dict:
         if isinstance(stripe_invoice_id, str) and stripe_invoice_id:
             repo.update_invoice_status_by_stripe_id(stripe_invoice_id, target_status)
     return {"received": True}
+
+
+@app.post("/api/organizations/{organization_id}/support-requests", status_code=status.HTTP_201_CREATED)
+def create_support_request(organization_id: str, body: SupportRequestCreate, request: Request) -> dict:
+    actor = identity(request)
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Support requests require PostgreSQL persistence")
+    try:
+        return postgres_repository().create_support_request(organization_uuid(organization_id), actor.actor_id, body.subject, body.body)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/api/organizations/{organization_id}/support-requests")
+def list_organization_support_requests(organization_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Support requests require PostgreSQL persistence")
+    try:
+        return postgres_repository().list_support_requests(actor.actor_id, "admin" in actor.roles, organization_uuid(organization_id))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/api/support-requests")
+def list_all_support_requests(request: Request, status_filter: Literal["open", "resolved"] | None = None) -> list[dict]:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Support requests require PostgreSQL persistence")
+    return postgres_repository().list_support_requests(actor.actor_id, True, status_filter=status_filter)
+
+
+@app.post("/api/support-requests/{request_id}/resolve")
+def resolve_support_request(request_id: UUID, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Support requests require PostgreSQL persistence")
+    try:
+        return postgres_repository().resolve_support_request(request_id, actor.actor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/professionals/{professional_id}/application", status_code=status.HTTP_201_CREATED)

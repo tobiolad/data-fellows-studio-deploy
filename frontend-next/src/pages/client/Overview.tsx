@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
 import { ArrowUpRight, CheckCircle2, FileCheck2, Folder, PackageCheck } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -84,9 +85,9 @@ export function ClientOverviewPage() {
                             {pkg.status.replace("_", " ")}
                           </Badge>
                           {pkg.deliverables && pkg.deliverables.length > 0 && (
-                            <a href="#" className="flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
+                            <Link to="/client/deliverables" className="flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
                               View <ArrowUpRight className="h-3 w-3" />
-                            </a>
+                            </Link>
                           )}
                         </div>
                       </div>
