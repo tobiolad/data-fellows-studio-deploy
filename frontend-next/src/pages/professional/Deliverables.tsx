@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { useIsPreviewingProfessional, usePreviewedProfessionalId } from "@/lib/view-as"
 import type { Assignment, Deliverable } from "@/lib/types"
 
 const STATUS_STYLES: Record<string, string> = {
@@ -24,7 +25,8 @@ const STATUS_STYLES: Record<string, string> = {
 
 export function ProfessionalDeliverablesPage() {
   const { session } = useAuth()
-  const actorId = session!.actorId
+  const actorId = usePreviewedProfessionalId(session!.actorId)
+  const previewing = useIsPreviewingProfessional()
   const queryClient = useQueryClient()
   const [packageId, setPackageId] = useState<string>("")
   const [title, setTitle] = useState("")
@@ -92,10 +94,10 @@ export function ProfessionalDeliverablesPage() {
               </div>
               <Button
                 className="w-full"
-                disabled={!packageId || title.trim().length < 2 || content.trim().length < 2 || submit.isPending}
+                disabled={previewing || !packageId || title.trim().length < 2 || content.trim().length < 2 || submit.isPending}
                 onClick={() => submit.mutate()}
               >
-                <Send className="h-3.5 w-3.5" /> Submit for review
+                <Send className="h-3.5 w-3.5" /> {previewing ? "Previewing — read only" : "Submit for review"}
               </Button>
             </CardContent>
           </Card>

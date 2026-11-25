@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { TagInput } from "@/components/TagInput"
 import { api, ApiError } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { useIsPreviewingProfessional, usePreviewedProfessionalId } from "@/lib/view-as"
 import type { AdmissionApplication, ProfessionalProfile } from "@/lib/types"
 import {
   EMPTY_PROFILE,
@@ -73,7 +74,8 @@ function toFormValues(profile: ProfessionalProfile): ProfileFormValues {
 
 export function ProfileWizardPage() {
   const { session } = useAuth()
-  const actorId = session!.actorId
+  const actorId = usePreviewedProfessionalId(session!.actorId)
+  const previewing = useIsPreviewingProfessional()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [step, setStep] = useState(0)
@@ -456,8 +458,8 @@ export function ProfileWizardPage() {
                 Continue <ArrowRight className="h-3.5 w-3.5" />
               </Button>
             ) : (
-              <Button type="button" onClick={form.handleSubmit((values) => submit.mutate(values))} disabled={submit.isPending}>
-                {submit.isPending ? "Submitting…" : "Submit for review"}
+              <Button type="button" onClick={form.handleSubmit((values) => submit.mutate(values))} disabled={previewing || submit.isPending}>
+                {previewing ? "Previewing — read only" : submit.isPending ? "Submitting…" : "Submit for review"}
               </Button>
             )}
           </div>

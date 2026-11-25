@@ -62,3 +62,23 @@ export function useEffectiveRole(sessionRole: Role): Role {
   if (sessionRole !== "admin") return sessionRole
   return viewAs?.role ?? "admin"
 }
+
+/** Every professional page reads this instead of the session's own actorId.
+ *  When an admin is previewing a specific professional, read calls resolve
+ *  against that professional instead -- the server still authorizes every
+ *  read (admin may read any professional) and still refuses every write
+ *  (the real actor is the admin, never the previewed professional), so a
+ *  preview changes what the admin sees, never what they can do. */
+export function usePreviewedProfessionalId(sessionActorId: string): string {
+  const { viewAs } = useViewAs()
+  if (viewAs?.role === "professional" && viewAs.targetId) return viewAs.targetId
+  return sessionActorId
+}
+
+/** True while an admin's professional preview is active -- used to hide
+ *  professional-only write actions (submit application, save profile,
+ *  accept/decline an assignment) rather than let them fail with a 403. */
+export function useIsPreviewingProfessional(): boolean {
+  const { viewAs } = useViewAs()
+  return viewAs?.role === "professional" && !!viewAs.targetId
+}

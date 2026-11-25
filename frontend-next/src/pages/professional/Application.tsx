@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, ApiError } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { usePreviewedProfessionalId } from "@/lib/view-as"
 import type { AdmissionApplication } from "@/lib/types"
 
 const STATUS_STYLES: Record<string, string> = {
@@ -21,7 +22,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 export function ProfessionalApplicationPage() {
   const { session } = useAuth()
-  const actorId = session!.actorId
+  const actorId = usePreviewedProfessionalId(session!.actorId)
 
   const application = useQuery({
     queryKey: ["application", actorId],

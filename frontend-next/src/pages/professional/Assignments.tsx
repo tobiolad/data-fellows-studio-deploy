@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { useIsPreviewingProfessional, usePreviewedProfessionalId } from "@/lib/view-as"
 import type { Assignment } from "@/lib/types"
 
 const STATUS_STYLES: Record<string, string> = {
@@ -20,7 +21,8 @@ const STATUS_STYLES: Record<string, string> = {
 
 export function ProfessionalAssignmentsPage() {
   const { session } = useAuth()
-  const actorId = session!.actorId
+  const actorId = usePreviewedProfessionalId(session!.actorId)
+  const previewing = useIsPreviewingProfessional()
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
@@ -57,7 +59,7 @@ export function ProfessionalAssignmentsPage() {
                 <p className="truncate text-xs text-muted-foreground">{item.project_name} · {item.engagement_name}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {item.status === "invited" ? (
+                {item.status === "invited" && !previewing ? (
                   <>
                     <Button size="sm" onClick={() => decide.mutate({ id: item.id, decision: "accept" })} disabled={decide.isPending}>
                       <Check className="h-3.5 w-3.5" /> Accept
