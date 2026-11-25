@@ -1,9 +1,11 @@
+import { useNavigate } from "react-router-dom"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { ArrowUpRight, Building2, Mail, ShieldCheck, UserCheck } from "lucide-react"
+import { ArrowUpRight, Building2, LogOut, Mail, ShieldCheck, UserCheck } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
@@ -16,7 +18,8 @@ const QUICK_LINKS = [
 ]
 
 export function AdminSettingsPage() {
-  const { session } = useAuth()
+  const { session, signOut } = useAuth()
+  const navigate = useNavigate()
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<Me>("/me") })
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -64,6 +67,24 @@ export function AdminSettingsPage() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="flex items-center justify-between gap-3 p-5">
+            <div>
+              <p className="text-sm font-medium text-foreground">Sign out</p>
+              <p className="text-xs text-muted-foreground">End this session on this device.</p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                signOut()
+                navigate("/sign-in", { replace: true })
+              }}
+            >
+              <LogOut className="h-3.5 w-3.5" /> Sign out
+            </Button>
           </CardContent>
         </Card>
 

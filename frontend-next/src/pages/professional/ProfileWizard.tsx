@@ -122,13 +122,16 @@ export function ProfileWizardPage() {
 
   const submit = useMutation({
     mutationFn: async (values: ProfileFormValues) => {
+      // An application record must exist before the backend will accept a
+      // profile write (persistence.py's upsert_professional_profile), so a
+      // first-time applicant has to get one created first.
+      if (!applicationQuery.data) {
+        await api.post(`/professionals/${encodeURIComponent(actorId)}/application`)
+      }
       await api.put(`/professionals/${encodeURIComponent(actorId)}/profile`, {
         ...values,
         expected_version: profileQuery.data?.version,
       })
-      if (!applicationQuery.data) {
-        await api.post(`/professionals/${encodeURIComponent(actorId)}/application`)
-      }
     },
     onSuccess: () => {
       toast.success("Profile submitted for independent review")
