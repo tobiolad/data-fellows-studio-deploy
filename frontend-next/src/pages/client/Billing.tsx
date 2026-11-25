@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
-import type { ClientOverview, Invoice } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
+import type { Invoice } from "@/lib/types"
 
 const STATUS_STYLES: Record<string, string> = {
   open: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -75,10 +76,7 @@ function OrganizationInvoices({ organizationId, organizationName }: { organizati
 }
 
 export function ClientBillingPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["client-overview"],
-    queryFn: () => api.get<ClientOverview>("/client/overview"),
-  })
+  const { data, isLoading, error } = useClientOverview()
 
   return (
     <AppShell title="Billing" description="Invoices from Data Fellows for your organization, and a direct link to pay each one.">

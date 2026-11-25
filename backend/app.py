@@ -1248,13 +1248,22 @@ def _memory_client_overview(actor: Identity) -> dict:
 
 
 @app.get("/api/client/overview")
-def client_overview(request: Request) -> dict:
+def client_overview(request: Request, organization_id: str | None = Query(default=None)) -> dict:
+    """`organization_id` lets an admin preview exactly what that organization's
+    client sees; anyone else gets 422, same as asking for a parameter that
+    doesn't exist for them."""
     actor = identity(request)
+    preview_organization_id = None
+    if organization_id is not None:
+        require_global(actor, "admin")
+        preview_organization_id = organization_uuid(organization_id)
     if postgres_mode():
         try:
-            return postgres_repository().client_overview(actor.actor_id)
+            return postgres_repository().client_overview(actor.actor_id, preview_organization_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _memory_client_overview(actor)
 
 

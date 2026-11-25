@@ -2,7 +2,9 @@ import { type ReactNode, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { LogOut, Menu, X } from "lucide-react"
 import { useAuth } from "@/lib/auth"
+import { useEffectiveRole } from "@/lib/view-as"
 import { NAV_CONFIG, PORTAL_LABEL, ROLE_ICON } from "@/components/layout/nav-config"
+import { ViewAsSwitcher } from "@/components/layout/ViewAsSwitcher"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -20,8 +22,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { session, signOut } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const effectiveRole = useEffectiveRole(session?.role ?? "admin")
   if (!session) return null
-  const sections = NAV_CONFIG[session.role]
+  const sections = NAV_CONFIG[effectiveRole]
 
   return (
     <div className="flex h-full flex-col text-sidebar-foreground">
@@ -75,7 +78,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
         >
           <LogOut className="h-4 w-4" />
-          Switch workspace
+          Sign out
         </button>
       </div>
     </div>
@@ -85,8 +88,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 export function AppShell({ children, title, description, actions }: AppShellProps) {
   const { session } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const effectiveRole = useEffectiveRole(session?.role ?? "admin")
   if (!session) return null
-  const RoleIcon = ROLE_ICON[session.role]
+  const RoleIcon = ROLE_ICON[effectiveRole]
 
   return (
     <div className="flex min-h-svh bg-background">
@@ -121,6 +125,7 @@ export function AppShell({ children, title, description, actions }: AppShellProp
           </div>
           <div className="flex items-center gap-3">
             {actions}
+            {session.role === "admin" && <ViewAsSwitcher />}
             <div className="hidden items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-3 sm:flex">
               <Avatar className="h-6 w-6">
                 <AvatarFallback className="bg-primary/10 text-[11px] font-medium text-primary">
@@ -130,7 +135,7 @@ export function AppShell({ children, title, description, actions }: AppShellProp
               <span className="text-xs font-medium text-foreground">{session.actorId}</span>
               <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px]">
                 <RoleIcon className="h-2.5 w-2.5" />
-                {PORTAL_LABEL[session.role]}
+                {PORTAL_LABEL[effectiveRole]}
               </Badge>
             </div>
           </div>

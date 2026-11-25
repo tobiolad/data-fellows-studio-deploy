@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
-import type { ClientOverview, ProjectMessage } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
+import type { ProjectMessage } from "@/lib/types"
 
 export function ClientMessagesPage() {
   const { session } = useAuth()
@@ -19,7 +20,7 @@ export function ClientMessagesPage() {
   const [projectId, setProjectId] = useState("")
   const [body, setBody] = useState("")
 
-  const overview = useQuery({ queryKey: ["client-overview"], queryFn: () => api.get<ClientOverview>("/client/overview") })
+  const overview = useClientOverview()
 
   useEffect(() => {
     if (!projectId && overview.data?.projects.length) setProjectId(overview.data.projects[0].id)

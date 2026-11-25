@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
-import type { ClientOverview, SupportRequest } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
+import type { SupportRequest } from "@/lib/types"
 
 function OrganizationSupport({ organizationId, organizationName }: { organizationId: string; organizationName: string }) {
   const queryClient = useQueryClient()
@@ -107,10 +108,7 @@ function OrganizationSupport({ organizationId, organizationName }: { organizatio
 }
 
 export function ClientSupportPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["client-overview"],
-    queryFn: () => api.get<ClientOverview>("/client/overview"),
-  })
+  const { data, isLoading, error } = useClientOverview()
 
   return (
     <AppShell title="Support" description="Reach Data Fellows directly. We reply by email, usually within a business day.">

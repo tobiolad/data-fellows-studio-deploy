@@ -257,6 +257,31 @@ class PostgresApiIntegrationTests(unittest.TestCase):
         self.assertEqual(review.status_code, 200)
         self.assertEqual(review.json()["status"], "under_review")
 
+    def test_admin_may_preview_a_specific_organizations_client_overview(self):
+        org = self.client.post("/api/organizations", headers=self.admin, json={"name": "Preview Target Co"}).json()
+        org_id = org["id"]
+        self.client.post(
+            f"/api/organizations/{org_id}/members", headers=self.admin,
+            json={"actor_id": "preview-client", "role": "client"},
+        ).raise_for_status()
+
+        preview = self.client.get(f"/api/client/overview?organization_id={org_id}", headers=self.admin)
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()["organizations"][0]["id"], org_id)
+
+        # Only an admin may pass the override; a real client asking for someone
+        # else's organization this way is refused, not silently ignored.
+        as_client = self.client.get(f"/api/client/overview?organization_id={org_id}", headers=auth("preview-client", "client"))
+        self.assertEqual(as_client.status_code, 403)
+
+        missing = self.client.get("/api/client/overview?organization_id=00000000-0000-0000-0000-000000000000", headers=self.admin)
+        self.assertEqual(missing.status_code, 404)
+
+        # A real client's own (unscoped) call is unaffected by the override existing.
+        own = self.client.get("/api/client/overview", headers=auth("preview-client", "client"))
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(own.json()["organizations"][0]["id"], org_id)
+
 
 if __name__ == "__main__":
     unittest.main()

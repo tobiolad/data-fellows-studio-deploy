@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { CheckCircle2, FileCheck2, RotateCcw } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
@@ -10,7 +10,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
-import type { ClientOverview, Deliverable } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
+import type { Deliverable } from "@/lib/types"
 
 const STATUS_STYLES: Record<string, string> = {
   under_review: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -24,10 +25,7 @@ export function ClientDeliverablesPage() {
   const [revisionTarget, setRevisionTarget] = useState<Deliverable | null>(null)
   const [comment, setComment] = useState("")
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["client-overview"],
-    queryFn: () => api.get<ClientOverview>("/client/overview"),
-  })
+  const { data, isLoading } = useClientOverview()
 
   const accept = useMutation({
     mutationFn: (id: string) => api.post(`/deliverables/${encodeURIComponent(id)}/accept`),

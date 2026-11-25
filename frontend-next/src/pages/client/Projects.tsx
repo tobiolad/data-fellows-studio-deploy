@@ -17,7 +17,8 @@ import {
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
-import type { ClientOverview, Project } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
+import type { Project } from "@/lib/types"
 
 interface ProjectRequest {
   id: string
@@ -140,10 +141,7 @@ function ProjectCard({ project }: { project: Project }) {
 }
 
 export function ClientProjectsPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["client-overview"],
-    queryFn: () => api.get<ClientOverview>("/client/overview"),
-  })
+  const { data, isLoading, error } = useClientOverview()
 
   return (
     <AppShell title="Projects & engagements" description="Every engagement authorized for your organization, and open requests to your delivery team.">

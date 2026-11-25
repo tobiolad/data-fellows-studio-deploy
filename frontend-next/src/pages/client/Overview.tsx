@@ -1,12 +1,10 @@
-import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { ArrowUpRight, CheckCircle2, FileCheck2, Folder, PackageCheck } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api } from "@/lib/api"
-import type { ClientOverview } from "@/lib/types"
+import { useClientOverview } from "@/lib/client-overview"
 
 function StatTile({ label, value, icon: Icon }: { label: string; value: number; icon: typeof Folder }) {
   return (
@@ -25,10 +23,7 @@ function StatTile({ label, value, icon: Icon }: { label: string; value: number; 
 }
 
 export function ClientOverviewPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["client-overview"],
-    queryFn: () => api.get<ClientOverview>("/client/overview"),
-  })
+  const { data, isLoading, error } = useClientOverview()
 
   return (
     <AppShell title="Your delivery overview" description="Track approved work, decisions and progress with Data Fellows.">

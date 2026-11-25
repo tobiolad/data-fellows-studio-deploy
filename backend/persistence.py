@@ -727,20 +727,30 @@ class PostgresRepository:
                 for row in rows
             ]
 
-    def client_overview(self, actor: str) -> dict[str, Any]:
-        """Build a client-safe read model from active client memberships only."""
+    def client_overview(self, actor: str, preview_organization_id: UUID | None = None) -> dict[str, Any]:
+        """Build a client-safe read model from active client memberships only.
+
+        `preview_organization_id` is set only by an admin previewing what a specific
+        organization's client sees (checked by the caller before this is reached);
+        it reads that one organization directly, skipping the membership requirement,
+        and a missing organization is a 404 rather than the usual 403."""
         with self.transaction() as connection:
             cursor = connection.cursor()
-            cursor.execute(
-                """SELECT o.id, o.name, o.created_at
-                   FROM organizations o JOIN memberships m ON m.organization_id = o.id
-                   WHERE m.actor_id = %s AND m.role = 'client' AND m.revoked_at IS NULL
-                   ORDER BY o.created_at""",
-                (actor,),
-            )
+            if preview_organization_id is not None:
+                cursor.execute("SELECT id, name, created_at FROM organizations WHERE id = %s", (preview_organization_id,))
+            else:
+                cursor.execute(
+                    """SELECT o.id, o.name, o.created_at
+                       FROM organizations o JOIN memberships m ON m.organization_id = o.id
+                       WHERE m.actor_id = %s AND m.role = 'client' AND m.revoked_at IS NULL
+                       ORDER BY o.created_at""",
+                    (actor,),
+                )
             organizations = [{"id": str(row[0]), "name": row[1], "created_at": row[2]} for row in cursor.fetchall()]
             organization_ids = [item["id"] for item in organizations]
             if not organization_ids:
+                if preview_organization_id is not None:
+                    raise LookupError("Organization not found")
                 raise PermissionError("An active client membership is required")
             cursor.execute(
                 """SELECT e.id, e.organization_id, e.name, e.objective, e.status, e.created_at, o.name
