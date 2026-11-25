@@ -247,6 +247,20 @@ export interface GoogleSignInResponse {
   pending: boolean
 }
 
+export interface Invoice {
+  id: string
+  organization_id: string
+  description: string
+  amount_cents: number
+  currency: string
+  status: "draft" | "open" | "paid" | "void" | "uncollectible"
+  hosted_invoice_url: string | null
+  created_by: string
+  created_at: string
+  sent_at: string | null
+  paid_at: string | null
+}
+
 export interface StudioAccount {
   id: string
   email: string

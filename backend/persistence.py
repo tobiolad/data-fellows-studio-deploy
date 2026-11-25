@@ -162,6 +162,157 @@ class PostgresRepository:
             )
             return [{"actor_id": row[0], "role": row[1], "created_at": row[2], "revoked_at": row[3]} for row in cursor.fetchall()]
 
+    def get_billing_customer(self, organization_id: UUID) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT organization_id, stripe_customer_id, email, created_at FROM billing_customers WHERE organization_id = %s",
+                (organization_id,),
+            )
+            row = cursor.fetchone()
+            return {"organization_id": str(row[0]), "stripe_customer_id": row[1], "email": row[2], "created_at": row[3]} if row else None
+
+    def create_billing_customer(self, organization_id: UUID, stripe_customer_id: str, email: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "INSERT INTO billing_customers(organization_id, stripe_customer_id, email) VALUES (%s, %s, %s)",
+                (organization_id, stripe_customer_id, email),
+            )
+
+    def create_invoice(self, organization_id: UUID, stripe_invoice_id: str, stripe_customer_id: str,
+                        description: str, amount_cents: int, currency: str, created_by: str) -> dict[str, Any]:
+        invoice_id = uuid4()
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT INTO invoices(id, organization_id, stripe_invoice_id, stripe_customer_id, description,
+                                        amount_cents, currency, status, created_by)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'draft', %s)""",
+                (invoice_id, organization_id, stripe_invoice_id, stripe_customer_id, description, amount_cents, currency, created_by),
+            )
+            self._audit(cursor, organization_id, created_by, "invoice.created", "invoice", str(invoice_id))
+            return self._invoice_row(cursor, invoice_id)
+
+    def list_invoices(self, organization_id: UUID, actor: str, admin: bool) -> list[dict[str, Any]]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            if not admin:
+                cursor.execute(
+                    "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL",
+                    (organization_id, actor),
+                )
+                if cursor.fetchone() is None:
+                    raise PermissionError("Organization membership is required to view its invoices")
+            # A draft has not been sent -- an unfinished amount an admin is still preparing is
+            # never visible to the client it is about, only to Studio staff.
+            draft_clause = "" if admin else "AND status != 'draft'"
+            cursor.execute(
+                f"""SELECT id, organization_id, description, amount_cents, currency, status, hosted_invoice_url,
+                          created_by, created_at, sent_at, paid_at
+                   FROM invoices WHERE organization_id = %s {draft_clause} ORDER BY created_at DESC""",
+                (organization_id,),
+            )
+            return [self._invoice_dict(row) for row in cursor.fetchall()]
+
+    def get_invoice_for_actor(self, invoice_id: UUID, actor: str, admin: bool) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT id, organization_id, stripe_invoice_id, description, amount_cents, currency, status,
+                          hosted_invoice_url, created_by, created_at, sent_at, paid_at
+                   FROM invoices WHERE id = %s""",
+                (invoice_id,),
+            )
+            row = cursor.fetchone()
+            if row is None or (not admin and row[6] == "draft"):
+                # A draft is Studio staff's unfinished work, not yet sent: the same 404 as a
+                # genuinely missing invoice, never a 403 that would confirm it exists.
+                raise LookupError("Invoice not found")
+            if not admin:
+                cursor.execute(
+                    "SELECT 1 FROM memberships WHERE organization_id = %s AND actor_id = %s AND revoked_at IS NULL",
+                    (row[1], actor),
+                )
+                if cursor.fetchone() is None:
+                    raise PermissionError("Organization membership is required to view this invoice")
+            return {"id": str(row[0]), "organization_id": str(row[1]), "stripe_invoice_id": row[2], "description": row[3],
+                    "amount_cents": row[4], "currency": row[5], "status": row[6], "hosted_invoice_url": row[7],
+                    "created_by": row[8], "created_at": row[9], "sent_at": row[10], "paid_at": row[11]}
+
+    def mark_invoice_sent(self, invoice_id: UUID, hosted_invoice_url: str, status: str, actor: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """UPDATE invoices SET status = %s, hosted_invoice_url = %s, sent_at = now(), updated_at = now()
+                   WHERE id = %s RETURNING organization_id""",
+                (status, hosted_invoice_url, invoice_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError("Invoice not found")
+            self._audit(cursor, row[0], actor, "invoice.sent", "invoice", str(invoice_id))
+            return self._invoice_row(cursor, invoice_id)
+
+    def void_invoice(self, invoice_id: UUID, actor: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "UPDATE invoices SET status = 'void', updated_at = now() WHERE id = %s AND status = 'open' RETURNING organization_id",
+                (invoice_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError("Only a sent, unpaid invoice can be voided")
+            self._audit(cursor, row[0], actor, "invoice.voided", "invoice", str(invoice_id))
+            return self._invoice_row(cursor, invoice_id)
+
+    def delete_draft_invoice(self, invoice_id: UUID, actor: str) -> None:
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT organization_id FROM invoices WHERE id = %s AND status = 'draft'", (invoice_id,))
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError("Only a draft invoice can be discarded")
+            cursor.execute("DELETE FROM invoices WHERE id = %s", (invoice_id,))
+            self._audit(cursor, row[0], actor, "invoice.discarded", "invoice", str(invoice_id))
+
+    def update_invoice_status_by_stripe_id(self, stripe_invoice_id: str, status: str) -> None:
+        """Applied only from a signature-verified Stripe webhook event, never from a client request."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            paid_at_clause = ", paid_at = now()" if status == "paid" else ""
+            cursor.execute(
+                f"UPDATE invoices SET status = %s, updated_at = now(){paid_at_clause} WHERE stripe_invoice_id = %s",
+                (status, stripe_invoice_id),
+            )
+
+    def record_webhook_event(self, event_id: str, event_type: str) -> bool:
+        """Returns True the first time this Stripe event id is seen, False on a redelivery."""
+        with self.transaction() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "INSERT INTO stripe_webhook_events(id, type) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (event_id, event_type),
+            )
+            return cursor.rowcount == 1
+
+    @staticmethod
+    def _invoice_row(cursor: Any, invoice_id: UUID) -> dict[str, Any]:
+        cursor.execute(
+            """SELECT id, organization_id, description, amount_cents, currency, status, hosted_invoice_url,
+                      created_by, created_at, sent_at, paid_at
+               FROM invoices WHERE id = %s""",
+            (invoice_id,),
+        )
+        return PostgresRepository._invoice_dict(cursor.fetchone())
+
+    @staticmethod
+    def _invoice_dict(row: Any) -> dict[str, Any]:
+        return {"id": str(row[0]), "organization_id": str(row[1]), "description": row[2], "amount_cents": row[3],
+                "currency": row[4], "status": row[5], "hosted_invoice_url": row[6], "created_by": row[7],
+                "created_at": row[8], "sent_at": row[9], "paid_at": row[10]}
+
     def create_engagement(self, organization_id: UUID, name: str, objective: str, actor: str) -> UUID:
         engagement_id = uuid4()
         with self.transaction() as connection:

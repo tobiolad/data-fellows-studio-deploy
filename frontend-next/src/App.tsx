@@ -21,6 +21,7 @@ import { AdminSettingsPage } from "@/pages/admin/Settings"
 import { ClientOverviewPage } from "@/pages/client/Overview"
 import { ClientProjectsPage } from "@/pages/client/Projects"
 import { ClientDeliverablesPage } from "@/pages/client/Deliverables"
+import { ClientBillingPage } from "@/pages/client/Billing"
 import { ClientMessagesPage } from "@/pages/client/Messages"
 import { ProfessionalOverviewPage } from "@/pages/professional/Overview"
 import { ProfileWizardPage } from "@/pages/professional/ProfileWizard"
@@ -57,7 +58,7 @@ export function App() {
       <Route path="/client/projects" element={<RequireAuth role="client"><ClientProjectsPage /></RequireAuth>} />
       <Route path="/client/deliverables" element={<RequireAuth role="client"><ClientDeliverablesPage /></RequireAuth>} />
       <Route path="/client/messages" element={<RequireAuth role="client"><ClientMessagesPage /></RequireAuth>} />
-      <Route path="/client/billing" element={<RequireAuth role="client"><ComingSoonPage title="Billing" /></RequireAuth>} />
+      <Route path="/client/billing" element={<RequireAuth role="client"><ClientBillingPage /></RequireAuth>} />
       <Route path="/client/support" element={<RequireAuth role="client"><ComingSoonPage title="Support" /></RequireAuth>} />
 
       <Route path="/professional" element={<RequireAuth role="professional"><ProfessionalOverviewPage /></RequireAuth>} />

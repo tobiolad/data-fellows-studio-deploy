@@ -31,6 +31,13 @@ from backend.google_auth import (
     validate_session_token,
 )
 from backend.persistence import PersistenceConfigurationError, PostgresRepository, SYNTHETIC_AGENT_ID
+from backend.stripe_billing import (
+    BILLING_ENABLED_ENV,
+    StripeBillingClient,
+    StripeBillingError,
+    StripeBillingSettings,
+    verify_webhook_signature,
+)
 
 
 def now() -> str:
@@ -191,6 +198,27 @@ def postgres_repository() -> PostgresRepository:
 def unsupported_memory_domain(operation: str) -> None:
     if postgres_mode():
         raise HTTPException(status_code=501, detail=f"PostgreSQL persistence for {operation} is not enabled yet")
+
+
+@lru_cache(maxsize=1)
+def stripe_billing_client() -> StripeBillingClient:
+    try:
+        return StripeBillingClient(StripeBillingSettings.from_environment())
+    except StripeBillingError as exc:
+        raise HTTPException(status_code=503, detail="Stripe billing is not configured") from exc
+
+
+def require_billing_enabled() -> None:
+    if os.getenv(BILLING_ENABLED_ENV, "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Client billing is not switched on")
+
+
+STRIPE_INVOICE_EVENT_STATUS = {
+    "invoice.paid": "paid",
+    "invoice.voided": "void",
+    "invoice.marked_uncollectible": "uncollectible",
+    "invoice.finalized": "open",
+}
 
 
 def organization_uuid(value: str) -> UUID:
@@ -366,6 +394,16 @@ class GoogleSignIn(BaseModel):
 
 class AccountRoleAssignment(BaseModel):
     role: Literal["admin", "reviewer", "professional", "client"]
+
+
+class InvoiceCreate(BaseModel):
+    description: str = Field(min_length=2, max_length=500)
+    amount_cents: int = Field(ge=100, le=100_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+    # Only read the first time an organization is billed; later invoices reuse the Stripe
+    # customer already on file and ignore these.
+    billing_email: str | None = Field(default=None, min_length=3, max_length=320)
+    billing_name: str | None = Field(default=None, min_length=2, max_length=160)
 
 
 class DiagnosticLinkCreate(BaseModel):
@@ -678,6 +716,145 @@ def revoke_member(organization_id: str, member_id: str, role: Literal["client", 
         store.memberships.pop((member_id, organization_id), None)
     audit_response(actor, "organization_membership", f"{member_id}:{organization_id}", "membership.revoked", organization_id)
     return {"actor_id": member_id, "organization_id": organization_id, "role": role, "status": "revoked"}
+
+
+@app.post("/api/organizations/{organization_id}/invoices", status_code=status.HTTP_201_CREATED)
+def create_invoice(organization_id: str, body: InvoiceCreate, request: Request) -> dict:
+    """Prepare a draft invoice. Nothing is emailed or visible to the client yet --
+    that only happens on the separate, explicit "send" action below."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    require_billing_enabled()
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    if body.currency != body.currency.lower() or not body.currency.isalpha():
+        raise HTTPException(status_code=422, detail="currency must be a lower-case 3-letter code, e.g. 'usd'")
+    org_id = organization_uuid(organization_id)
+    repo = postgres_repository()
+    client = stripe_billing_client()
+    existing = repo.get_billing_customer(org_id)
+    if existing is None:
+        if not body.billing_email or not body.billing_name:
+            raise HTTPException(status_code=422, detail="billing_email and billing_name are required to bill this organization for the first time")
+        try:
+            created = client.create_customer(body.billing_email, body.billing_name)
+        except StripeBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        repo.create_billing_customer(org_id, created["id"], body.billing_email)
+        stripe_customer_id = created["id"]
+    else:
+        stripe_customer_id = existing["stripe_customer_id"]
+    try:
+        draft = client.create_invoice(stripe_customer_id, body.currency)
+        client.add_invoice_item(stripe_customer_id, draft["id"], body.amount_cents, body.currency, body.description)
+    except StripeBillingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return repo.create_invoice(org_id, draft["id"], stripe_customer_id, body.description, body.amount_cents, body.currency, actor.actor_id)
+
+
+@app.get("/api/organizations/{organization_id}/invoices")
+def list_invoices(organization_id: str, request: Request) -> list[dict]:
+    actor = identity(request)
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    try:
+        return postgres_repository().list_invoices(organization_uuid(organization_id), actor.actor_id, admin="admin" in actor.roles)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/api/invoices/{invoice_id}")
+def get_invoice(invoice_id: UUID, request: Request) -> dict:
+    actor = identity(request)
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    try:
+        return postgres_repository().get_invoice_for_actor(invoice_id, actor.actor_id, admin="admin" in actor.roles)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/send")
+def send_invoice(invoice_id: UUID, request: Request) -> dict:
+    """The one action that actually emails the client: finalize then send, in one press."""
+    actor = identity(request)
+    require_global(actor, "admin")
+    require_billing_enabled()
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    repo = postgres_repository()
+    try:
+        record = repo.get_invoice_for_actor(invoice_id, actor.actor_id, admin=True)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if record["status"] != "draft":
+        raise HTTPException(status_code=409, detail="Only a draft invoice can be sent")
+    client = stripe_billing_client()
+    try:
+        client.finalize_invoice(record["stripe_invoice_id"])
+        sent = client.send_invoice(record["stripe_invoice_id"])
+    except StripeBillingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return repo.mark_invoice_sent(invoice_id, sent.get("hosted_invoice_url") or "", sent.get("status") or "open", actor.actor_id)
+
+
+@app.post("/api/invoices/{invoice_id}/void")
+def void_invoice(invoice_id: UUID, request: Request) -> dict:
+    actor = identity(request)
+    require_global(actor, "admin")
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    repo = postgres_repository()
+    try:
+        record = repo.get_invoice_for_actor(invoice_id, actor.actor_id, admin=True)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if record["status"] == "draft":
+        try:
+            stripe_billing_client().delete_draft_invoice(record["stripe_invoice_id"])
+        except StripeBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        repo.delete_draft_invoice(invoice_id, actor.actor_id)
+        return {"id": str(invoice_id), "status": "discarded"}
+    try:
+        stripe_billing_client().void_invoice(record["stripe_invoice_id"])
+    except StripeBillingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        return repo.void_invoice(invoice_id, actor.actor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request) -> dict:
+    """Verified by Stripe's own signature, never by anything the caller claims.
+    Idempotent: a redelivered event id is acknowledged without being re-applied."""
+    if not postgres_mode():
+        raise HTTPException(status_code=501, detail="Billing requires PostgreSQL persistence")
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        raise HTTPException(status_code=503, detail="Stripe webhook secret is not configured")
+    payload = await request.body()
+    try:
+        event = verify_webhook_signature(payload, request.headers.get("stripe-signature", ""), webhook_secret)
+    except StripeBillingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    event_id = event.get("id")
+    event_type = event.get("type")
+    if not isinstance(event_id, str) or not event_id:
+        raise HTTPException(status_code=400, detail="Stripe event is missing an id")
+    repo = postgres_repository()
+    if not repo.record_webhook_event(event_id, event_type if isinstance(event_type, str) else "unknown"):
+        return {"received": True, "deduplicated": True}
+    target_status = STRIPE_INVOICE_EVENT_STATUS.get(event_type) if isinstance(event_type, str) else None
+    if target_status:
+        stripe_invoice_id = (event.get("data") or {}).get("object", {}).get("id")
+        if isinstance(stripe_invoice_id, str) and stripe_invoice_id:
+            repo.update_invoice_status_by_stripe_id(stripe_invoice_id, target_status)
+    return {"received": True}
 
 
 @app.post("/api/professionals/{professional_id}/application", status_code=status.HTTP_201_CREATED)
