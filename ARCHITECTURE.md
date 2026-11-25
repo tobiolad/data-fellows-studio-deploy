@@ -4,6 +4,80 @@ This describes what is actually running, verified by direct inspection this
 session, not the target architecture in the planning docs (which describe a
 different, not-yet-built hosting plan — see `SYSTEM_AUDIT.md` §1).
 
+## Three horizons (founder decision, 25 November 2026)
+
+Three distinct things, not two, and they must not be conflated:
+
+1. **Current live implementation**: Google OAuth, Vercel (frontend),
+   Railway (backend + Postgres), a live Stripe restricted key. Verified
+   this session (§"Studio: backend/frontend" below).
+2. **Approved short-term operating arrangement**: the same stack as (1).
+   The founder has explicitly authorized it as the operating environment
+   for now — it is not a stopgap awaiting correction, it is the plan
+   until (3) is funded and scheduled. Identity must be designed so a
+   future provider (Entra or otherwise) can be added later without an
+   auth rewrite (tracked in the durable-runtime phase below), but no
+   migration is scheduled.
+3. **Long-term target**: Azure, funded by the Microsoft for Startups
+   scholarship (up to $150,000 in Azure credits) and Microsoft Foundry
+   model access. Not scheduled; subject to its own cost/migration/
+   security review before any infrastructure moves. The one near-term
+   exception is evaluating the **Microsoft Foundry model API** as a
+   controlled AI provider inside the existing model gateway — that does
+   not require moving the Studio application itself, so it is in scope
+   now while (2) continues to host everything else.
+
+## Target logical architecture (AI + human workforce)
+
+Founder-specified layering for the AI-native build. Each layer is a
+separate component; nothing here ties the product to one model vendor,
+SDK or cloud:
+
+```
+Client / Partner / Professional / Administrator
+  -> Studio Applications and APIs                         [exists: backend/app.py, frontend-next/]
+  -> Engagements, Projects, Work Packages, Assignments      [exists]
+  -> AI and Human Work Orchestrator                        [does not exist yet]
+  -> Durable Agent Task Queue and Workers                  [does not exist yet]
+  -> Agent Registry + Agent Factory + Skills/Tool Registry  [registry exists (ai_agents); Factory and tool registry do not]
+  -> Model Gateway                                          [exists: backend/model_gateway.py, synthetic-only]
+  -> Microsoft Foundry DeepSeek / other approved providers  [does not exist; adapter to be built]
+  -> Versioned Artifacts, Evaluations, Human Reviews        [artifacts/reviews exist; evaluations do not]
+  -> Client Acceptance and Managed Support                  [exists]
+```
+
+What exists today, precisely (re-verified by reading the code this
+session, not from memory):
+
+- `ai_agents` (migration `011_agent_registry.sql`): one row per registered
+  agent — name, purpose, capability_category, provider/model/model_version,
+  allowed_tools (jsonb), data_access_scope, autonomy_level,
+  requires_human_approval, budget_cap_cents, owner_actor_id, status
+  (`active`/`disabled`). Only `POST /api/ai-agents` (create) and
+  `GET /api/ai-agents` (list) exist — **no update, activate/disable, or
+  retire route**. There is no lifecycle state machine (Draft → Testing →
+  Awaiting Approval → Active → Suspended → Retired) at all; `status` is a
+  flat two-value field set once at creation.
+- `ai_runs` / `artifacts` (migration `001_initial.sql`, extended by `011`):
+  a run is created and resolved to `succeeded` **synchronously, inside the
+  HTTP request** (`create_ai_run` in `app.py`) — `status` has a
+  `queued`/`running` state in its CHECK constraint that nothing ever
+  produces, because the synthetic adapter is instantaneous. There is no
+  queue, no worker process, no lease, no retry, no checkpoint.
+- `model_gateway.py`: `resolve_adapter(provider)` is the one chokepoint
+  every run goes through. The only adapter registered is
+  `SyntheticPlannerAdapter`. Any other provider requires an operator to
+  set `STUDIO_AI_REAL_PROVIDER_APPROVED=1`, which **only records that a
+  human has reviewed and budgeted it** — no real adapter exists yet, so
+  the flag alone cannot execute a real call. This is the correct seam for
+  a Foundry adapter: add `FoundryAdapter(ModelAdapter)` here, nothing
+  upstream changes.
+
+This matches `REQUIREMENTS_TRACEABILITY.md` §5 exactly; nothing has
+changed structurally since that audit except the registry's pre-existing
+shape being confirmed suitable as the foundation for the Agent Factory
+(Decision/mandate, 25 November) rather than needing a rewrite.
+
 ## Repositories
 
 Three independent repositories, no shared package, no monorepo tooling:

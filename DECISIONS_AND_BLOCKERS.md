@@ -1,117 +1,158 @@
-# Decisions and blockers — needs the founder
+# Decisions and blockers
 
-Everything here needs Tobi's explicit call before work continues on it.
-Nothing in this file has been acted on unilaterally.
+Founder response received and recorded 25 November 2026 ("Founder Response
+to System Audit & Full AI Workforce Build Mandate"). Each of the original
+ten items now carries a resolution; new blockers raised by the AI-workforce
+mandate itself are appended at the end. Nothing below has been acted on
+beyond what's explicitly marked done.
 
-## 1. The premise has moved — which plan governs now?
+## 1. The premise has moved — RESOLVED
 
-The 7 founder-authored planning Google Docs (all dated 24 November,
-marked "working draft") describe: Microsoft Entra for auth, Azure as the
-eventual (last) deployment target, and explicitly "no live money
-movement" as a safety boundary for this phase. Since those docs were
-written, this session has, at your direction: built real Google OAuth
-(not Entra), deployed to Vercel + Railway (not Azure), and processed a
-real transaction through a live Stripe key. **None of this was a mistake
-or scope creep — you directed every step.** The question is whether the
-planning docs should be updated to match what's actually true, or whether
-there's a reason Entra/Azure/no-live-money is still the intended
-destination and today's stack is a temporary bridge. This governs whether
-`ARCHITECTURE.md` and the other audit files should be read as "the plan"
-or "a snapshot of a detour." **Needs your answer before any of the docs
-are revised to be forward-looking rather than descriptive.**
+**Founder decision:** keep Google OAuth, Vercel, Railway and Postgres as
+the **approved short-term operating arrangement**. Azure remains the
+**long-term target**, funded by the Microsoft startup scholarship, but is
+not being migrated to now. The documentation must distinguish three
+things, not two: current live implementation, approved interim
+arrangement, and long-term target. `ARCHITECTURE.md` has been updated to
+carry this distinction explicitly (see its new "Three horizons" section).
+Identity must be designed so a future provider (Entra, or anything else)
+can be added without an auth rewrite — tracked as a Phase 1 requirement,
+not an immediate migration.
 
-## 2. The live Stripe key
+## 2. The live Stripe key — RESOLVED, action pending
 
-A real `rk_live_` restricted key (Customers + Invoices write only) is
-configured and has processed one real invoice. You said "let's use it
-like that" when I flagged it was live, not test. Flagging again now that
-the full audit is in front of you: this key, if ever exposed, could
-create customers and invoices in your real Stripe account (not move
-money out — it has no Payouts/Charges scope). Options: leave it as is
-(it's already working and scoped narrowly), rotate it periodically as a
-habit, or move to test mode until real clients are onboarded. **No action
-taken; your call.**
+**Founder decision:** keep the integration; rotate the key in a
+**controlled** way (verify new permissions, affected integrations,
+rollback plan, monitoring, before cutover). Use Stripe **test mode** for
+all new automated development/testing from now on. Live payment actions
+need explicit authorization each time. Do not interrupt real billing.
+**Status: rotation plan not yet written.** This is Phase 0 work — see the
+new blocker list below. No key value will ever be pasted into chat, a
+commit, or a log; the replacement is created directly in Stripe and
+referenced only by its Railway environment variable name.
 
-## 3. `STUDIO_SESSION_SECRET` exposure
+## 3. `STUDIO_SESSION_SECRET` — RESOLVED, action pending
 
-This secret has appeared in this chat's history. You were told before and
-declined rotation. Re-raised here only because the master audit asked
-every open security item be named, not because anything new happened.
-**If you still want to leave it as is, no action needed — just confirming
-that's still the decision.**
+**Founder decision:** approved, treated as a security priority. Rotate
+it, invalidate every session signed with the old value, require affected
+users to sign in again, document the expected user impact, and get
+explicit confirmation before executing (since Studio is live). **Status:
+not yet executed.** Phase 0 item.
 
-## 4. The $1 test invoice under "Send Verification Org"
+## 4. The $1 verification invoice — needs one more fact before closing
 
-Still open in live Stripe from earlier verification. Void it, or let it
-sit — low stakes, but it's real and in your live account. **Needs a
-one-line answer, not a build task.**
+Not yet inspected this round. Next action: read the actual Stripe record
+for "Send Verification Org" and report back (unpaid test → prepare to
+void; paid or tied to a real obligation → report status, propose
+accounting action, do nothing automatic). No new invoice will be created
+to test anything further.
 
-## 5. Project completion defect (P0)
+## 5. Project completion defect — APPROVED TO FIX, not yet done
 
-Confirmed still present: a project with multiple required work packages
-is marked complete when any one deliverable is accepted, not all of them.
-This is a real correctness bug that could misrepresent delivery status to
-a client. **Recommend fixing this before anything else** — it's small,
-contained to one function (`project_complete` in `persistence.py`), and
-every day it ships is a day a real engagement could be marked done
-prematurely. Waiting for your go-ahead to fix it, per your instruction not
-to begin new work until the audit baseline is approved.
+**Founder decision:** fix it. Must respect the project's actual
+completion rules; test multi-package, rejected-package, optional-package
+and revision scenarios; run the full regression suite before proposing
+anything for merge. **Status: Phase 0, next concrete code change.**
 
-## 6. BizPilot's `openai` dependency gap
+## 6. BizPilot `openai` dependency — APPROVED TO FIX, not yet done
 
-`async_ai_service.py` can't even be imported without the `openai` package,
-which isn't declared. Small fix (add the dependency or make the import
-lazy), but I want your confirmation before touching BizPilot's
-`requirements.txt`, since that file's dependency set may be deliberately
-pinned for a reason I don't have visibility into.
+**Founder decision:** fix the packaging problem, but first determine
+whether `async_ai_service.py` is active, optional, or dead code, and avoid
+unnecessarily introducing a paid-provider dependency while doing it.
+Preserve working diagnostic behavior; run BizPilot's tests. **Status:
+Phase 0, next concrete code change.**
 
-## 7. The PR backlogs
+## 7. Existing pull requests — RESOLVED (hold, with conditions)
 
-- Studio: 38 stacked draft PRs still open (task #34), explicitly paused
-  by your "do not close/merge/delete without approval" instruction this
-  round. The earlier close-14-of-53 effort (and the self-corrected #3/#4/#5
-  mistake) are both already resolved; this is just the remaining count,
-  frozen until you say go again.
-- BizPilot: its own PR-stack merge sequence (task #7) was never approved.
-  Same status — paused, not forgotten.
+**Founder decision:** preserve all work. Keep #3, #4, #5 and #19 held
+until their individual conflicts and relevance are resolved one at a
+time. Produce an exact reconciliation report (Studio's 38 remaining PRs,
+and BizPilot's queue) against the canonical branch and the live deployed
+commit, showing what's already merged, what's still useful, and what
+conflicts — **before** any merge. Do not resume BizPilot's merge sequence
+until its integration baseline is independently verified. **Status: the
+reconciliation report has not been produced yet** — it's real work (38
+PRs to diff individually), tracked as a Phase 0/ongoing item, not
+something to rush to close out this response.
 
-**Needs**: either explicit approval to resume closing/merging, or a
-decision to leave both backlogs as they are for now.
+## 8. Legacy `frontend/` — RESOLVED
 
-## 8. `frontend/` vs `frontend-next/`
+**Founder decision:** the React frontend (`frontend-next/`) is the
+intended product interface. Keep the old `frontend/` until functional
+parity, references, build dependencies and rollback needs are checked,
+then propose its removal in its own dedicated PR. No action needed now.
 
-The old `frontend/` directory in Studio is dead — not built, not deployed,
-not referenced anywhere. Recommend deleting it so a future reader doesn't
-mistake it for live code, but it's your repo's history to decide, not
-mine to delete silently.
+## 9. AI product claims — RESOLVED, standing rule
 
-## 9. What the product says about AI, versus what it does
+**Founder decision:** describe the AI workforce as under development
+until actual agent capabilities are tested. Never claim autonomous
+engineering, screening, diagnostics or support are fully available when
+they're not; vision and working functionality must stay distinguishable
+to a customer. This is now a standing constraint on all customer-facing
+copy for the rest of this build, not a one-time edit.
 
-The planning docs describe a genuinely agentic workforce — AI screening
-applicants, AI investigating support incidents, AI planning projects. None
-of that exists yet; what exists is one synthetic, instantaneous
-"planning" agent type behind a real tool-authorization and reviewer-
-approval boundary. This isn't a problem by itself, but if any client-
-facing copy, pitch material, or the public website ever describes more
-than this, that's a promise the product doesn't keep yet. **Needs a
-decision on messaging, not code** — happy to help draft accurate copy
-once you've said how far ahead of the build you want the story to run.
+## 10. Hosting reconciliation — RESOLVED
 
-## 10. Hosting reconciliation, formally
-
-The master prompt asked me to "first reconcile the current hosting
-arrangement with the founder" before describing it as settled. This
-document, together with #1 above, is that reconciliation request:
-Vercel + Railway + Google OAuth + live Stripe is what's actually running
-today, for all three repos, entirely at your direction. If that's the
-plan going forward, say so and I'll treat the older docs as superseded
-history rather than a target to reconcile toward. If it isn't, tell me
-what changes and why, and I'll fold that into the next revision of these
-audit files.
+**Founder decision:** document Vercel/Railway/Postgres as an authorized
+interim deployment; Azure is the long-term target subject to its own
+cost/migration/security review, not happening now. The one near-term
+exception: evaluating the Microsoft Foundry model API as a controlled AI
+provider is in scope immediately and does **not** require moving the
+Studio application itself. Folded into `ARCHITECTURE.md`.
 
 ---
 
-**Per your instruction, no further build work (including the paused
-admin View-As feature, the PR backlogs, or any item in
-`MASTER_BUILD_CHECKLIST.md`) will resume until you've reviewed the audit
-baseline above and told me what to do next.**
+## New blockers raised by the AI-workforce mandate (25 November 2026)
+
+These are the items that genuinely cannot proceed without a founder
+decision or an external fact the founder is better placed to get. Each is
+referenced from the implementation plan delivered alongside this file.
+
+### A. The deploy-repo release process
+
+Vercel and Railway both build from `tobiolad/data-fellows-studio-deploy`
+(a separate personal repo), not `Data-Fellows/data-fellows-studio`. Every
+commit this session has gone to the latter; none of it has reached the
+former, which is why nothing built so far has been visible on the live
+site. **A push to that personal repo's `main` deploys to production
+immediately — there is no staging in front of it.** I have working push
+access and confirmed a clean fast-forward is possible, but per Decision 1
+("no production deployment changes without my approval," "establish a
+controlled release process that keeps the canonical organization
+repository authoritative") I have not pushed it. **Needed from you:**
+confirm the release process I propose in the implementation plan below
+(canonical repo → reviewed branch → an explicit, named release step that
+pushes to the mirror), and tell me whether to execute that first release
+now or hold until more of Phase 0 is done.
+
+### B. Microsoft startup scholarship — facts only you can get
+
+The plan calls for verifying, before any Foundry/DeepSeek code is
+written: the exact subscription and remaining eligible balance, credit
+expiration date, which DeepSeek deployment (if any) is already available
+to Data Fellows, whether it's billed directly by Azure or by a partner,
+and the model/version/region/endpoint/rate-limit/data-terms. None of this
+is discoverable from the codebase or from here without your Azure
+portal access or an account conversation with Microsoft. **Needed from
+you:** either grant a way to check this (a read-only Azure login, or an
+export of the relevant subscription page), or get the answers yourself
+and hand them back — I can draft the exact questions to ask Microsoft if
+that's faster.
+
+### C. Stripe test-mode credentials for new development
+
+Decision 2 says new automated tests must use Stripe test mode. Today's
+billing tests use a fake in-process Stripe double (`_FakeStripeClient`),
+which is correct for unit tests, but a real end-to-end test-mode run
+(the kind already proven once in live mode this session) needs a real
+Stripe **test** restricted key. **Needed from you:** a test-mode
+restricted key when we get to re-proving billing end to end, same
+scoped-permission template as the live one.
+
+### D. Scope of the first real-model demonstration
+
+Section 14 of your directive asks for one narrow real-model
+demonstration after the synthetic one, "after explicit approval and
+proof that the DeepSeek deployment is funded appropriately." That
+approval is a separate, later decision from this one — flagged here so
+it isn't assumed to be pre-granted by this response.
